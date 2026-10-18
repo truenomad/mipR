@@ -58,6 +58,18 @@
   )
 }
 
+# internal helper: download files from the share into .part paths, resuming
+# any partial download
+#' @noRd
+.ihme_download <- function(urls, part_paths, quiet) {
+  suppressWarnings(curl::multi_download(
+    urls, part_paths,
+    resume = TRUE, progress = !quiet,
+    userpwd = paste0(.ihme_share_token, ":"),
+    low_speed_limit = 1024, low_speed_time = 120
+  ))
+}
+
 # internal helper: authenticated httr2 request against the share
 #' @noRd
 .ihme_request <- function(url) {
@@ -286,19 +298,31 @@ get_ihme_mcv <- function(dest_dir = ".", quiet = FALSE) {
     urls <- .ihme_webdav_url(files$folder[fetch_idx], files$remote[fetch_idx])
     part_paths <- paste0(dests[fetch_idx], ".part")
 
-    results <- suppressWarnings(curl::multi_download(
-      urls, part_paths,
-      resume = TRUE, progress = !quiet,
-      userpwd = paste0(.ihme_share_token, ":"),
-      low_speed_limit = 1024, low_speed_time = 120
-    ))
+    results <- .ihme_download(urls, part_paths, quiet)
     fetched <- results$success %in% TRUE & file.exists(part_paths)
 
-    file.rename(part_paths[fetched], dests[fetch_idx][fetched])
-    unlink(part_paths[!fetched])
+    # the share can drop a file while the large rasters are downloading, so
+    # retry failures one at a time
+    for (j in which(!fetched)) {
+      results[j, ] <- .ihme_download(urls[j], part_paths[j], quiet)
+      fetched[j] <- results$success[j] %in% TRUE & file.exists(part_paths[j])
+    }
 
-    for (i in fetch_idx[!fetched]) {
-      cli::cli_alert_danger("Failed to download {files$remote[i]}")
+    file.rename(part_paths[fetched], dests[fetch_idx][fetched])
+
+    # keep interrupted downloads for resuming, but drop error-page bodies
+    http_error <- !fetched & results$status_code %in% 400:599
+    unlink(part_paths[http_error])
+
+    for (j in which(!fetched)) {
+      reason <- if (is.na(results$error[j])) {
+        paste("HTTP", results$status_code[j])
+      } else {
+        results$error[j]
+      }
+      cli::cli_alert_danger(
+        "Failed to download {files$remote[fetch_idx[j]]} ({reason})"
+      )
     }
   }
 
