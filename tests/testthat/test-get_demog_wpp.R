@@ -37,31 +37,31 @@ testthat::test_that(".closest_year picks the nearest year", {
   testthat::expect_identical(.closest_year(2000:2023, 1990), 2000L)
 })
 
-testthat::test_that("get_demog_wpp returns EMOD demographic inputs", {
-  testthat::skip_if_not_installed("wpp2024")
-
-  out <- suppressMessages(get_demog_wpp("BDI", 2022))
-
-  testthat::expect_named(
-    out,
-    c(
-      "age_distribution", "crude_birth_rate", "crude_death_rate",
-      "birth_rate_daily", "country", "year"
-    )
-  )
-  cdf <- out$age_distribution$DistributionValues
-  testthat::expect_false(is.unsorted(cdf))
-  testthat::expect_equal(utils::tail(cdf, 1), 1)
-  testthat::expect_equal(out$birth_rate_daily, out$crude_birth_rate / 365)
-})
-
-testthat::test_that("get_demog_wpp returns one entry per year", {
+testthat::test_that("get_demog_wpp returns rates and age distribution", {
   testthat::skip_if_not_installed("wpp2024")
 
   out <- suppressMessages(get_demog_wpp("NGA", 2022:2025))
 
-  testthat::expect_named(out, as.character(2022:2025))
-  testthat::expect_identical(out[["2025"]]$year, 2025L)
-  cbr <- vapply(out, function(x) x$crude_birth_rate, numeric(1))
-  testthat::expect_false(anyNA(cbr))
+  testthat::expect_named(out, c("rates", "age_distribution"))
+  testthat::expect_identical(out$rates$year, 2022:2025)
+  testthat::expect_equal(
+    out$rates$birth_rate_daily,
+    out$rates$crude_birth_rate / 1000 / 365
+  )
+
+  ad <- out$age_distribution
+  testthat::expect_identical(nrow(ad), 4L * 101L)
+  final <- ad$cumulative_proportion[ad$age == 100]
+  testthat::expect_equal(final, rep(1, 4))
+  testthat::expect_identical(ad$age_days[ad$age == 0], rep(365, 4))
+})
+
+testthat::test_that("get_demog_wpp matches published WPP 2024 rates", {
+  testthat::skip_if_not_installed("wpp2024")
+
+  # UN WPP 2024 values for Nigeria, as also published by the World Bank
+  out <- suppressMessages(get_demog_wpp("NGA", c(2000, 2023)))
+
+  testthat::expect_equal(out$rates$crude_birth_rate, c(43.892, 32.954))
+  testthat::expect_equal(out$rates$crude_death_rate, c(17.439, 11.740))
 })
