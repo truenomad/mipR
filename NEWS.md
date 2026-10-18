@@ -3,3 +3,8 @@
 * Set up the package infrastructure: DESCRIPTION, MIT licence, roxygen2
   documentation, testthat (third edition), GitHub Actions R CMD check,
   README and package logo.
+* Added `get_boundaries()` and `list_boundaries()` to download
+  administrative boundaries from OCHA COD-AB (default), geoBoundaries, GADM
+  or WHO.
+* Added `get_worldpop()`, `get_worldpop_age_band()` and
+  `get_worldpop_paths()` to download WorldPop population rasters.
