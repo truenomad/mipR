@@ -6,7 +6,7 @@
 \usage{
 get_boundaries(
   country,
-  level = 2,
+  adm_level = 2,
   source = c("ocha", "geoboundaries", "gadm", "who"),
   cache = TRUE,
   cache_dir = tools::R_user_dir("mipR", which = "cache"),
@@ -17,7 +17,7 @@ get_boundaries(
 \arguments{
 \item{country}{Character vector of ISO3 country codes (e.g. \code{"AFG"}).}
 
-\item{level}{Administrative level, as a number (\code{0}, \code{1}, \code{2}, ...) or a
+\item{adm_level}{Administrative level, as a number (\code{0}, \code{1}, \code{2}, ...) or a
 string such as \code{"ADM2"}. Default is \code{2}.}
 
 \item{source}{Boundary provider: \code{"ocha"} (default), \code{"geoboundaries"},
@@ -87,16 +87,16 @@ temporary directory instead.
 \examples{
 \dontrun{
 # OCHA COD-AB districts for Afghanistan
-afghanistan <- get_boundaries(country = "AFG", level = 2, source = "ocha")
+afghanistan <- get_boundaries("AFG", adm_level = 2, source = "ocha")
 
 # geoBoundaries provinces
-afg_adm1 <- get_boundaries("AFG", level = 1, source = "geoboundaries")
+afg_adm1 <- get_boundaries("AFG", adm_level = 1, source = "geoboundaries")
 
 # GADM districts for two countries
-gadm_adm2 <- get_boundaries(c("KEN", "UGA"), level = 2, source = "gadm")
+gadm_adm2 <- get_boundaries(c("KEN", "UGA"), adm_level = 2, source = "gadm")
 
 # WHO boundaries, including historical ones
-sudan <- get_boundaries("SDN", level = 0, source = "who", latest = FALSE)
+sudan <- get_boundaries("SDN", adm_level = 0, source = "who", latest = FALSE)
 }
 
 }
