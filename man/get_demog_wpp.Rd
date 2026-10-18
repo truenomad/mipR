@@ -14,43 +14,39 @@ not match exactly is accepted if it matches part of exactly one name.}
 \item{year}{Reference year, or a vector of years.}
 }
 \value{
-For a single year, a named list:
+A list of two data frames:
 \describe{
-\item{age_distribution}{List with \code{DistributionValues} (cumulative
-share), \code{ResultScaleFactor} and \code{ResultValues} (age in days)}
-\item{crude_birth_rate}{Annual births per 1,000 population}
-\item{crude_death_rate}{Annual deaths per 1,000 population}
-\item{birth_rate_daily}{Crude birth rate divided by 365, for the EMOD
-\code{BirthRate} node attribute}
-\item{country}{Matched country name}
-\item{year}{Reference year used}
+\item{rates}{One row per year with \code{country}, \code{year},
+\code{crude_birth_rate} and \code{crude_death_rate} (per 1,000 population per
+year) and \code{birth_rate_daily} (births per person per day)}
+\item{age_distribution}{One row per year and single year of age (0 to
+100) with \code{country}, \code{year}, \code{age}, \code{proportion},
+\code{cumulative_proportion} and \code{age_days}}
 }
-For several years, a list of these, named by year.
 }
 \description{
 Pulls the single-year age structure and vital rates for one country from
-the UN World Population Prospects 2024 and returns an age distribution,
-crude birth and death rates, and a daily birth rate for each year.
+the UN World Population Prospects 2024 and returns them as two data
+frames, one row per year for the rates and one row per year and age for
+the age distribution.
 }
 \details{
-The age distribution is the cumulative share of the population by single
-year of age, with ages expressed in days, in the layout used by EMOD's
-\code{AgeDistribution}.
-
 Years up to 2023 come from the WPP estimates and later years from the
 medium-variant projections, so 1950 to 2100 is covered. A year outside
 that range is replaced by the closest available year, with a warning.
+The single-year population in wpp2024 refers to 31 December of each year.
+
+\code{age_days} is the upper end of each year of age in days, so
+\code{cumulative_proportion} is the share of the population younger than
+\code{age_days}. Age 100 means 100 and over.
 
 The data come from the wpp2024 package, which is not on CRAN. Install it
 with \code{remotes::install_github("PPgp/wpp2024")}.
 }
 \examples{
 \dontrun{
-demog <- get_demog_wpp("BDI", 2022)
-demog$crude_birth_rate
-
-# one entry per year
-demog_nga <- get_demog_wpp("Nigeria", 2000:2026)
-demog_nga[["2026"]]$crude_birth_rate
+demog <- get_demog_wpp("NGA", 2000:2026)
+demog$rates
+demog$age_distribution
 }
 }

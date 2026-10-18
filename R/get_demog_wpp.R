@@ -1,17 +1,19 @@
 #' Get Demographic Inputs from UN WPP 2024
 #'
 #' Pulls the single-year age structure and vital rates for one country from
-#' the UN World Population Prospects 2024 and returns an age distribution,
-#' crude birth and death rates, and a daily birth rate for each year.
+#' the UN World Population Prospects 2024 and returns them as two data
+#' frames, one row per year for the rates and one row per year and age for
+#' the age distribution.
 #'
 #' @details
-#' The age distribution is the cumulative share of the population by single
-#' year of age, with ages expressed in days, in the layout used by EMOD's
-#' `AgeDistribution`.
-#'
 #' Years up to 2023 come from the WPP estimates and later years from the
 #' medium-variant projections, so 1950 to 2100 is covered. A year outside
 #' that range is replaced by the closest available year, with a warning.
+#' The single-year population in wpp2024 refers to 31 December of each year.
+#'
+#' `age_days` is the upper end of each year of age in days, so
+#' `cumulative_proportion` is the share of the population younger than
+#' `age_days`. Age 100 means 100 and over.
 #'
 #' The data come from the wpp2024 package, which is not on CRAN. Install it
 #' with `remotes::install_github("PPgp/wpp2024")`.
@@ -21,27 +23,21 @@
 #'   not match exactly is accepted if it matches part of exactly one name.
 #' @param year Reference year, or a vector of years.
 #'
-#' @return For a single year, a named list:
+#' @return A list of two data frames:
 #'   \describe{
-#'     \item{age_distribution}{List with `DistributionValues` (cumulative
-#'       share), `ResultScaleFactor` and `ResultValues` (age in days)}
-#'     \item{crude_birth_rate}{Annual births per 1,000 population}
-#'     \item{crude_death_rate}{Annual deaths per 1,000 population}
-#'     \item{birth_rate_daily}{Crude birth rate divided by 365, for the EMOD
-#'       `BirthRate` node attribute}
-#'     \item{country}{Matched country name}
-#'     \item{year}{Reference year used}
+#'     \item{rates}{One row per year with `country`, `year`,
+#'       `crude_birth_rate` and `crude_death_rate` (per 1,000 population per
+#'       year) and `birth_rate_daily` (births per person per day)}
+#'     \item{age_distribution}{One row per year and single year of age (0 to
+#'       100) with `country`, `year`, `age`, `proportion`,
+#'       `cumulative_proportion` and `age_days`}
 #'   }
-#'   For several years, a list of these, named by year.
 #'
 #' @examples
 #' \dontrun{
-#' demog <- get_demog_wpp("BDI", 2022)
-#' demog$crude_birth_rate
-#'
-#' # one entry per year
-#' demog_nga <- get_demog_wpp("Nigeria", 2000:2026)
-#' demog_nga[["2026"]]$crude_birth_rate
+#' demog <- get_demog_wpp("NGA", 2000:2026)
+#' demog$rates
+#' demog$age_distribution
 #' }
 #' @export
 get_demog_wpp <- function(country, year) {
@@ -72,54 +68,50 @@ get_demog_wpp <- function(country, year) {
   pop_age <- pop_age[pop_age$name == country_name, ]
   misc <- misc[misc$name == country_name, ]
 
-  out <- lapply(year, function(yr) .demog_one_year(pop_age, misc, yr))
-  if (length(out) == 1) {
-    return(out[[1]])
-  }
-  stats::setNames(out, year)
-}
-
-# internal helper: age distribution and vital rates for one country-year
-#' @noRd
-.demog_one_year <- function(pop_age, misc, year) {
-  country_name <- pop_age$name[1]
-
   available_years <- intersect(unique(pop_age$year), unique(misc$year))
-  if (!year %in% available_years) {
-    closest <- .closest_year(available_years, year)
-    cli::cli_alert_warning(
-      "Year {year} not available. Using closest: {closest}"
-    )
-    year <- closest
-  }
-
-  age_data <- pop_age[pop_age$year == year, ]
-  age_data <- age_data[order(age_data$age), ]
-
-  prop <- age_data$pop / sum(age_data$pop, na.rm = TRUE)
-  age_distribution <- list(
-    DistributionValues = cumsum(prop),
-    ResultScaleFactor = 1,
-    ResultValues = age_data$age * 365
+  years_used <- vapply(
+    year,
+    function(yr) {
+      if (yr %in% available_years) {
+        return(as.integer(yr))
+      }
+      closest <- as.integer(.closest_year(available_years, yr))
+      cli::cli_alert_warning("Year {yr} not available. Using {closest}")
+      closest
+    },
+    integer(1)
   )
 
-  vital <- misc[misc$year == year, ]
-  crude_birth_rate <- vital$cbr[1]
-  crude_death_rate <- vital$cdr[1]
-
-  cli::cli_alert_success(paste0(
-    "{country_name} {year}: CBR {round(crude_birth_rate, 2)}, ",
-    "CDR {round(crude_death_rate, 2)} (per 1,000 per year)"
-  ))
-
-  list(
-    age_distribution = age_distribution,
-    crude_birth_rate = crude_birth_rate,
-    crude_death_rate = crude_death_rate,
-    birth_rate_daily = crude_birth_rate / 365,
+  rates <- misc[match(years_used, misc$year), c("year", "cbr", "cdr")]
+  rates <- data.frame(
     country = country_name,
-    year = year
+    year = years_used,
+    crude_birth_rate = rates$cbr,
+    crude_death_rate = rates$cdr,
+    birth_rate_daily = rates$cbr / 1000 / 365
   )
+
+  age_distribution <- do.call(rbind, lapply(years_used, function(yr) {
+    age_data <- pop_age[pop_age$year == yr, ]
+    age_data <- age_data[order(age_data$age), ]
+    proportion <- age_data$pop / sum(age_data$pop)
+    data.frame(
+      country = country_name,
+      year = yr,
+      age = as.integer(age_data$age),
+      proportion = proportion,
+      cumulative_proportion = cumsum(proportion),
+      age_days = (age_data$age + 1) * 365
+    )
+  }))
+  rownames(age_distribution) <- NULL
+
+  cli::cli_alert_success(
+    "{country_name}: WPP 2024 rates and age distribution for \\
+     {length(unique(years_used))} year{?s}"
+  )
+
+  list(rates = rates, age_distribution = age_distribution)
 }
 
 # internal helper: load one wpp2024 dataset as a data frame. the data files

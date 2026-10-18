@@ -61,6 +61,14 @@ The top group is 90+ for 2015 onwards and 80+ for earlier years. Within
 that group, ages up to 100 can be requested; WPP age 100 means 100 and
 over.
 
+WorldPop and WPP are matched at the WorldPop reference date. R2025A
+refers to 1 January of each year, as stated in its release statement.
+R2024B does not state a date and is also taken as 1 January. The legacy
+2000-2020 data do not state a date and are taken as 1 July. The wpp2024
+package gives population at 31 December of each year, so 1 January uses
+the previous year's WPP population and 1 July uses the mean of the
+previous and current year.
+
 Group rasters are kept in \code{out_dir} and reused by later calls. Years
 before 2015 use the legacy 2000-2020 dataset (1km, male and female
 only); later years use the R2025A or R2024B release. The WPP data come

@@ -33,7 +33,7 @@
 #' temporary directory instead.
 #'
 #' @param country Character vector of ISO3 country codes (e.g. `"AFG"`).
-#' @param level Administrative level, as a number (`0`, `1`, `2`, ...) or a
+#' @param adm_level Administrative level, as a number (`0`, `1`, `2`, ...) or a
 #'   string such as `"ADM2"`. Default is `2`.
 #' @param source Boundary provider: `"ocha"` (default), `"geoboundaries"`,
 #'   `"gadm"` or `"who"`. Case is ignored, so `"WHO"` also works.
@@ -63,16 +63,16 @@
 #' @examples
 #' \dontrun{
 #' # OCHA COD-AB districts for Afghanistan
-#' afghanistan <- get_boundaries(country = "AFG", level = 2, source = "ocha")
+#' afghanistan <- get_boundaries("AFG", adm_level = 2, source = "ocha")
 #'
 #' # geoBoundaries provinces
-#' afg_adm1 <- get_boundaries("AFG", level = 1, source = "geoboundaries")
+#' afg_adm1 <- get_boundaries("AFG", adm_level = 1, source = "geoboundaries")
 #'
 #' # GADM districts for two countries
-#' gadm_adm2 <- get_boundaries(c("KEN", "UGA"), level = 2, source = "gadm")
+#' gadm_adm2 <- get_boundaries(c("KEN", "UGA"), adm_level = 2, source = "gadm")
 #'
 #' # WHO boundaries, including historical ones
-#' sudan <- get_boundaries("SDN", level = 0, source = "who", latest = FALSE)
+#' sudan <- get_boundaries("SDN", adm_level = 0, source = "who", latest = FALSE)
 #' }
 #'
 #' @seealso [list_boundaries()] to see the sources available for a country.
@@ -80,7 +80,7 @@
 #' @export
 get_boundaries <- function(
   country,
-  level = 2,
+  adm_level = 2,
   source = c("ocha", "geoboundaries", "gadm", "who"),
   cache = TRUE,
   cache_dir = tools::R_user_dir("mipR", which = "cache"),
@@ -92,7 +92,7 @@ get_boundaries <- function(
     c("ocha", "geoboundaries", "gadm", "who")
   )
   country <- .check_country(country)
-  level <- .check_level(level, source)
+  level <- .check_level(adm_level, source)
 
   if (source == "who") {
     dest_path <- if (isTRUE(cache)) file.path(cache_dir, "who") else NULL
@@ -220,8 +220,8 @@ list_boundaries <- function(
   if (length(level) != 1 || is.na(level_num) || level_num < 0 ||
         level_num > max_level) {
     cli::cli_abort(c(
-      "Invalid {.arg level} for source {.val {source}}",
-      "i" = "Use a level from 0 to {max_level}, e.g. {.code level = 2}"
+      "Invalid {.arg adm_level} for source {.val {source}}",
+      "i" = "Use a level from 0 to {max_level}, e.g. {.code adm_level = 2}"
     ))
   }
   level_num

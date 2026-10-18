@@ -12,19 +12,19 @@ testthat::test_that("get_boundaries validates country", {
 
 testthat::test_that("get_boundaries validates level for each source", {
   testthat::expect_error(
-    get_boundaries("KEN", level = 3, source = "who"),
+    get_boundaries("KEN", adm_level = 3, source = "who"),
     "Invalid"
   )
   testthat::expect_error(
-    get_boundaries("KEN", level = "ADM5", source = "ocha"),
+    get_boundaries("KEN", adm_level = "ADM5", source = "ocha"),
     "Invalid"
   )
   testthat::expect_error(
-    get_boundaries("KEN", level = "invalid", source = "gadm"),
+    get_boundaries("KEN", adm_level = "invalid", source = "gadm"),
     "Invalid"
   )
   testthat::expect_error(
-    get_boundaries("KEN", level = -1, source = "geoboundaries"),
+    get_boundaries("KEN", adm_level = -1, source = "geoboundaries"),
     "Invalid"
   )
 })
@@ -38,7 +38,7 @@ testthat::test_that("get_boundaries rejects unknown sources", {
 
 testthat::test_that("get_boundaries accepts source in any case", {
   testthat::expect_error(
-    get_boundaries("KEN", level = 3, source = "WHO"),
+    get_boundaries("KEN", adm_level = 3, source = "WHO"),
     "Invalid"
   )
 })
@@ -89,7 +89,7 @@ testthat::test_that("get_boundaries downloads OCHA COD-AB boundaries", {
   testthat::skip_if_offline()
   skip_if_not_integration("OCHA integration test skipped.")
 
-  result <- get_boundaries("TCD", level = 2, source = "ocha", cache = FALSE)
+  result <- get_boundaries("TCD", adm_level = 2, source = "ocha", cache = FALSE)
 
   testthat::expect_s3_class(result, "sf")
   testthat::expect_true(all(result$adm0_code == "TCD"))
@@ -103,7 +103,7 @@ testthat::test_that("get_boundaries downloads geoBoundaries boundaries", {
   skip_if_not_integration("geoBoundaries integration test skipped.")
 
   result <- get_boundaries(
-    "COM", level = 1, source = "geoboundaries", cache = FALSE
+    "COM", adm_level = 1, source = "geoboundaries", cache = FALSE
   )
 
   testthat::expect_s3_class(result, "sf")
@@ -116,7 +116,7 @@ testthat::test_that("get_boundaries downloads GADM boundaries", {
   testthat::skip_if_offline()
   skip_if_not_integration("GADM integration test skipped.")
 
-  result <- get_boundaries("COM", level = 1, source = "gadm", cache = FALSE)
+  result <- get_boundaries("COM", adm_level = 1, source = "gadm", cache = FALSE)
 
   testthat::expect_s3_class(result, "sf")
   testthat::expect_true(all(result$adm0_code == "COM"))

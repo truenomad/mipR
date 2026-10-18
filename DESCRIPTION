@@ -20,6 +20,7 @@ Imports:
     countrycode,
     curl,
     dplyr,
+    exactextractr,
     httr2,
     sf,
     stats,

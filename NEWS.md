@@ -9,12 +9,18 @@
 * Added `get_worldpop()` to download WorldPop population rasters.
 * Added `get_ihme_mcv()` to download the IHME geospatial MCV1 and MCV2
   coverage estimates and methods documentation, using the latest release.
-* Added `get_demog_wpp()` to get the age distribution, crude birth and
-  death rates and daily birth rate from UN WPP 2024, for a country given by
-  ISO3 code or name and for one or more years from 1950 to 2100.
+* Added `get_demog_wpp()` to get crude birth and death rates, the daily
+  birth rate and the single-year age distribution from UN WPP 2024,
+  for a country given by ISO3 code or name and for one or more years from
+  1950 to 2100.
 * `get_ihme_mcv()` retries files that fail during the concurrent download
   and reports the HTTP status or error for any that still fail.
 * Added `get_worldpop_single_age()` to make single-year age rasters by
   splitting WorldPop age groups with UN WPP 2024 single-year population.
 * WorldPop age-sex structures are now downloaded from the University of
   Southampton mirror when the FTP mirror cannot deliver them.
+* Added `extract_raster()` to summarise rasters over boundary polygons,
+  reading the year, month and single year of age from each filename.
+* `get_worldpop_single_age()` now takes WPP age shares at the WorldPop
+  reference date: 1 January for R2025A and R2024B, and an assumed 1 July for
+  the legacy 2000-2020 data.
