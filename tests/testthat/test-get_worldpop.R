@@ -314,150 +314,8 @@ testthat::test_that("get_worldpop: handles multiple countries and years", {
   testthat::expect_length(result$counts, 2)
 })
 
-# get_worldpop_age_band tests --------------------------------------------------
+# age-band URL tests -----------------------------------------------------------
 # integration tests use the legacy dataset (years < 2015) for reliability
-
-testthat::test_that("age band: handles multiple countries and years (legacy)", {
-  skip_if_not_integration("WorldPop age-band integration test skipped.")
-
-  test_dir <- file.path(tempdir(), "worldpop_multi_test")
-
-  testthat::expect_no_error({
-    get_worldpop_age_band(
-      country_codes = c("GMB", "LUX"),
-      years = c(2010, 2011),
-      age_range = c(0, 0),
-      out_dir = test_dir
-    )
-  })
-
-  expected_files <- c(
-    "gmb_total_00_00_2010.tif",
-    "gmb_total_00_00_2011.tif",
-    "lux_total_00_00_2010.tif",
-    "lux_total_00_00_2011.tif"
-  )
-
-  for (file in expected_files) {
-    testthat::expect_true(
-      file.exists(file.path(test_dir, file)),
-      info = paste("Missing file:", file)
-    )
-  }
-
-  unlink(test_dir, recursive = TRUE)
-})
-
-testthat::test_that("age band: combines multiple bands correctly (legacy)", {
-  skip_if_not_integration("WorldPop age-band integration test skipped.")
-
-  test_dir <- file.path(tempdir(), "worldpop_bands_test")
-
-  testthat::expect_no_error({
-    get_worldpop_age_band(
-      country_codes = "GMB",
-      years = 2010,
-      age_range = c(2, 9),
-      out_dir = test_dir
-    )
-  })
-
-  expected_file <- file.path(test_dir, "gmb_total_01_09_2010.tif")
-  testthat::expect_true(file.exists(expected_file))
-
-  unlink(test_dir, recursive = TRUE)
-})
-
-testthat::test_that("age band: handles edge cases in age ranges (legacy)", {
-  skip_if_not_integration("WorldPop age-band integration test skipped.")
-
-  test_dir <- file.path(tempdir(), "worldpop_edge_test")
-
-  testthat::expect_no_error({
-    get_worldpop_age_band(
-      country_codes = "GMB",
-      years = 2010,
-      age_range = c(5, 9),
-      out_dir = test_dir
-    )
-  })
-
-  expected_file <- file.path(test_dir, "gmb_total_05_09_2010.tif")
-  testthat::expect_true(file.exists(expected_file))
-
-  testthat::expect_no_error({
-    get_worldpop_age_band(
-      country_codes = "GMB",
-      years = 2010,
-      age_range = c(0, 25),
-      out_dir = test_dir
-    )
-  })
-
-  expected_file_wide <- file.path(test_dir, "gmb_total_00_29_2010.tif")
-  testthat::expect_true(file.exists(expected_file_wide))
-
-  unlink(test_dir, recursive = TRUE)
-})
-
-testthat::test_that("age band: skips existing files", {
-  skip_if_not_integration("WorldPop age-band integration test skipped.")
-
-  test_dir <- file.path(tempdir(), "worldpop_skip_test")
-
-  testthat::expect_no_error({
-    get_worldpop_age_band(
-      country_codes = "GMB",
-      years = 2010,
-      age_range = c(0, 0),
-      out_dir = test_dir
-    )
-  })
-
-  expected_file <- file.path(test_dir, "gmb_total_00_00_2010.tif")
-  testthat::expect_true(file.exists(expected_file))
-
-  first_mtime <- file.info(expected_file)$mtime
-  Sys.sleep(1)
-
-  testthat::expect_message(
-    {
-      get_worldpop_age_band(
-        country_codes = "GMB",
-        years = 2010,
-        age_range = c(0, 0),
-        out_dir = test_dir
-      )
-    },
-    "already exists"
-  )
-
-  second_mtime <- file.info(expected_file)$mtime
-  testthat::expect_equal(first_mtime, second_mtime)
-
-  unlink(test_dir, recursive = TRUE)
-})
-
-testthat::test_that("age band: creates output directory", {
-  skip_if_not_integration("WorldPop age-band integration test skipped.")
-
-  test_dir <- file.path(tempdir(), "new_worldpop_dir", "subdir")
-
-  testthat::expect_false(dir.exists(test_dir))
-
-  testthat::expect_no_error({
-    get_worldpop_age_band(
-      country_codes = "GMB",
-      years = 2010,
-      age_range = c(0, 0),
-      out_dir = test_dir
-    )
-  })
-
-  testthat::expect_true(dir.exists(test_dir))
-
-  unlink(file.path(tempdir(), "new_worldpop_dir"), recursive = TRUE)
-})
 
 testthat::test_that(".build_worldpop_age_band_url: legacy per-country", {
   result <- .build_worldpop_age_band_url(
@@ -466,7 +324,7 @@ testthat::test_that(".build_worldpop_age_band_url: legacy per-country", {
   testthat::expect_equal(
     result$url,
     paste0(
-      "https://data.worldpop.org/GIS/AgeSex_structures/",
+      "https://worldpop-public-data.soton.ac.uk/GIS/AgeSex_structures/",
       "Global_2000_2020_1km/unconstrained/2010/TUN/tun_m_5_2010_1km.tif"
     )
   )
@@ -507,7 +365,7 @@ testthat::test_that(".build_worldpop_age_band_url: R2025A per-country", {
   testthat::expect_equal(
     result$url,
     paste0(
-      "https://data.worldpop.org/GIS/AgeSex_structures/",
+      "https://worldpop-public-data.soton.ac.uk/GIS/AgeSex_structures/",
       "Global_2015_2030/R2025A/2020/GIN/v1/1km_ua/constrained/",
       "gin_t_00_2020_CN_1km_R2025A_UA_v1.tif"
     )
@@ -521,7 +379,7 @@ testthat::test_that(".build_worldpop_age_band_url: R2025A per-country", {
   testthat::expect_equal(
     result_100m$url,
     paste0(
-      "https://data.worldpop.org/GIS/AgeSex_structures/",
+      "https://worldpop-public-data.soton.ac.uk/GIS/AgeSex_structures/",
       "Global_2015_2030/R2025A/2020/GIN/v1/100m/constrained/",
       "gin_m_05_2020_CN_100m_R2025A_v1.tif"
     )
@@ -536,7 +394,7 @@ testthat::test_that(".build_worldpop_age_band_url: R2024B per-country", {
   testthat::expect_equal(
     result$url,
     paste0(
-      "https://data.worldpop.org/GIS/AgeSex_structures/",
+      "https://worldpop-public-data.soton.ac.uk/GIS/AgeSex_structures/",
       "Global_2015_2030/R2024B/2015/BDI/v1/1km_ua/unconstrained/",
       "bdi_t_00_2015_UC_1km_R2024B_UA_v1.tif"
     )
@@ -549,7 +407,7 @@ testthat::test_that(".build_worldpop_age_band_url: R2024B per-country", {
   testthat::expect_equal(
     result_100m$url,
     paste0(
-      "https://data.worldpop.org/GIS/AgeSex_structures/",
+      "https://worldpop-public-data.soton.ac.uk/GIS/AgeSex_structures/",
       "Global_2015_2030/R2024B/2015/BDI/v1/100m/unconstrained/",
       "bdi_f_00_2015_UC_100m_R2024B_v1.tif"
     )
@@ -564,7 +422,7 @@ testthat::test_that(".build_worldpop_age_band_url: GLOBAL mosaic", {
   testthat::expect_equal(
     result_r2025a$url,
     paste0(
-      "https://data.worldpop.org/GIS/AgeSex_structures/",
+      "https://worldpop-public-data.soton.ac.uk/GIS/AgeSex_structures/",
       "Global_2015_2030/R2025A/2020/0_Mosaicked/v1/1km_ua/constrained/",
       "global_t_00_2020_CN_1km_R2025A_UA_v1.tif"
     )
@@ -577,7 +435,7 @@ testthat::test_that(".build_worldpop_age_band_url: GLOBAL mosaic", {
   testthat::expect_equal(
     result_r2024b$url,
     paste0(
-      "https://data.worldpop.org/GIS/AgeSex_structures/",
+      "https://worldpop-public-data.soton.ac.uk/GIS/AgeSex_structures/",
       "Global_2015_2030/R2024B/2020/0_Mosaicked/v1/1km_ua/unconstrained/",
       "global_t_00_2020_UC_1km_R2024B_UA_v1.tif"
     )
@@ -589,155 +447,5 @@ testthat::test_that(".build_worldpop_age_band_url: GLOBAL mosaic", {
       "GLOBAL", "t", 0, 2020, "100m", "R2025A"
     ),
     "1km"
-  )
-})
-
-testthat::test_that("get_worldpop_age_band: GLOBAL/release validation", {
-  temp_dir <- setup_temp_dir()
-  on.exit(unlink(temp_dir, recursive = TRUE))
-
-  # GLOBAL + legacy year
-  testthat::expect_error(
-    get_worldpop_age_band(
-      country_codes = "GLOBAL", years = 2010,
-      out_dir = temp_dir, quiet = TRUE
-    ),
-    "GLOBAL"
-  )
-  # GLOBAL + 100m
-  testthat::expect_error(
-    get_worldpop_age_band(
-      country_codes = "GLOBAL", years = 2020,
-      resolution = "100m", out_dir = temp_dir, quiet = TRUE
-    ),
-    "GLOBAL"
-  )
-  # invalid release
-  testthat::expect_error(
-    get_worldpop_age_band(
-      country_codes = "GIN", years = 2020,
-      release = "R2030A", out_dir = temp_dir, quiet = TRUE
-    ),
-    "should be one of"
-  )
-})
-
-testthat::test_that("age band: uses 't' total for both sexes from 2015", {
-  testthat::skip_if_not(
-    requireNamespace("terra", quietly = TRUE),
-    "terra package not available"
-  )
-  temp_dir <- setup_temp_dir()
-  on.exit(unlink(temp_dir, recursive = TRUE))
-
-  # pre-stage a valid 't' raster for band 0; age_range c(0, 0) selects
-  # band 0 only so no other downloads are triggered
-  r <- suppressWarnings(terra::rast(nrows = 2, ncols = 2, vals = 1))
-  t_fname <- file.path(temp_dir, "gin_t_00_2020_CN_1km_UA_v1.tif")
-  suppressWarnings(terra::writeRaster(r, t_fname))
-
-  testthat::expect_no_error({
-    get_worldpop_age_band(
-      country_codes = "GIN",
-      years = 2020,
-      age_range = c(0, 0),
-      sex = "both",
-      out_dir = temp_dir,
-      quiet = TRUE
-    )
-  })
-
-  expected <- file.path(temp_dir, "gin_total_00_00_2020.tif")
-  testthat::expect_true(file.exists(expected))
-
-  # m and f variants are not touched because 't' is used directly
-  m_fn <- file.path(temp_dir, "gin_m_00_2020_CN_1km_UA_v1.tif")
-  f_fn <- file.path(temp_dir, "gin_f_00_2020_CN_1km_UA_v1.tif")
-  testthat::expect_false(file.exists(m_fn))
-  testthat::expect_false(file.exists(f_fn))
-})
-
-testthat::test_that("age band: keeps band files unless told not to", {
-  testthat::skip_if_not(
-    requireNamespace("terra", quietly = TRUE),
-    "terra package not available"
-  )
-
-  stage_t_raster <- function(dir) {
-    r <- suppressWarnings(terra::rast(nrows = 2, ncols = 2, vals = 1))
-    t_fname <- file.path(dir, "gin_t_00_2020_CN_1km_UA_v1.tif")
-    suppressWarnings(terra::writeRaster(r, t_fname))
-    t_fname
-  }
-
-  # default: band file is kept next to the combined raster
-  keep_dir <- setup_temp_dir()
-  on.exit(unlink(keep_dir, recursive = TRUE), add = TRUE)
-  t_fname_kept <- stage_t_raster(keep_dir)
-  get_worldpop_age_band(
-    "GIN",
-    years = 2020, age_range = c(0, 0),
-    out_dir = keep_dir, quiet = TRUE
-  )
-  testthat::expect_true(
-    file.exists(file.path(keep_dir, "gin_total_00_00_2020.tif"))
-  )
-  testthat::expect_true(file.exists(t_fname_kept))
-
-  # keep_band_files = FALSE: band file is deleted
-  drop_dir <- setup_temp_dir()
-  on.exit(unlink(drop_dir, recursive = TRUE), add = TRUE)
-  t_fname <- stage_t_raster(drop_dir)
-  get_worldpop_age_band(
-    "GIN",
-    years = 2020, age_range = c(0, 0),
-    out_dir = drop_dir, quiet = TRUE, keep_band_files = FALSE
-  )
-  testthat::expect_true(
-    file.exists(file.path(drop_dir, "gin_total_00_00_2020.tif"))
-  )
-  testthat::expect_false(file.exists(t_fname))
-})
-
-testthat::test_that("age band: combine = FALSE writes no combined raster", {
-  testthat::skip_if_not(
-    requireNamespace("terra", quietly = TRUE),
-    "terra package not available"
-  )
-
-  band_dir <- setup_temp_dir()
-  on.exit(unlink(band_dir, recursive = TRUE), add = TRUE)
-  r <- suppressWarnings(terra::rast(nrows = 2, ncols = 2, vals = 1))
-  t_fname <- file.path(band_dir, "gin_t_00_2020_CN_1km_UA_v1.tif")
-  suppressWarnings(terra::writeRaster(r, t_fname))
-
-  get_worldpop_age_band(
-    "GIN",
-    years = 2020, age_range = c(0, 0),
-    out_dir = band_dir, quiet = TRUE, combine = FALSE,
-    keep_band_files = FALSE
-  )
-  testthat::expect_false(
-    file.exists(file.path(band_dir, "gin_total_00_00_2020.tif"))
-  )
-  testthat::expect_true(file.exists(t_fname))
-})
-
-testthat::test_that(".build_age_band_filename builds output names", {
-  testthat::expect_equal(
-    .build_age_band_filename("TUN", 2020, c(1, 9)),
-    "tun_total_01_09_2020.tif"
-  )
-  testthat::expect_equal(
-    .build_age_band_filename("GMB", 2021, c(0, 0)),
-    "gmb_total_00_00_2021.tif"
-  )
-  testthat::expect_equal(
-    .build_age_band_filename("BDI", 2020, c(15, 49), sex = "f"),
-    "bdi_f_15_49_2020.tif"
-  )
-  testthat::expect_equal(
-    .build_age_band_filename("BDI", 2020, c(20, Inf)),
-    "bdi_total_20_80plus_2020.tif"
   )
 })

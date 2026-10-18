@@ -1,22 +1,35 @@
-testthat::test_that(".match_wpp_country prefers an exact match", {
-  available <- c("Congo", "Democratic Republic of the Congo", "Kenya")
+locations <- data.frame(
+  country_code = c(178, 180, 566, 702),
+  name = c("Congo", "Democratic Republic of the Congo", "Nigeria", "Singapore")
+)
 
-  testthat::expect_identical(.match_wpp_country("congo", available), "Congo")
-  testthat::expect_identical(.match_wpp_country("KENYA", available), "Kenya")
+testthat::test_that(".match_wpp_country accepts ISO3 codes", {
+  testthat::expect_identical(.match_wpp_country("NGA", locations), "Nigeria")
+  testthat::expect_identical(
+    .match_wpp_country("cod", locations),
+    "Democratic Republic of the Congo"
+  )
 })
 
-testthat::test_that(".match_wpp_country falls back to a partial match", {
-  available <- c("Democratic Republic of the Congo", "Kenya")
+testthat::test_that(".match_wpp_country prefers an exact name match", {
+  testthat::expect_identical(.match_wpp_country("congo", locations), "Congo")
+  testthat::expect_identical(
+    .match_wpp_country("NIGERIA", locations),
+    "Nigeria"
+  )
+})
 
+testthat::test_that(".match_wpp_country uses a unique partial match only", {
   testthat::expect_message(
-    out <- .match_wpp_country("Republic of the Congo", available),
+    out <- .match_wpp_country("Singa", locations),
     "Partial match"
   )
-  testthat::expect_identical(out, "Democratic Republic of the Congo")
+  testthat::expect_identical(out, "Singapore")
   testthat::expect_error(
-    .match_wpp_country("Narnia", available),
-    "not found"
+    .match_wpp_country("ongo", locations),
+    "several"
   )
+  testthat::expect_error(.match_wpp_country("Narnia", locations), "not found")
 })
 
 testthat::test_that(".closest_year picks the nearest year", {
@@ -27,7 +40,7 @@ testthat::test_that(".closest_year picks the nearest year", {
 testthat::test_that("get_demog_wpp returns EMOD demographic inputs", {
   testthat::skip_if_not_installed("wpp2024")
 
-  out <- suppressMessages(get_demog_wpp("Burundi", 2022))
+  out <- suppressMessages(get_demog_wpp("BDI", 2022))
 
   testthat::expect_named(
     out,
@@ -40,4 +53,15 @@ testthat::test_that("get_demog_wpp returns EMOD demographic inputs", {
   testthat::expect_false(is.unsorted(cdf))
   testthat::expect_equal(utils::tail(cdf, 1), 1)
   testthat::expect_equal(out$birth_rate_daily, out$crude_birth_rate / 365)
+})
+
+testthat::test_that("get_demog_wpp returns one entry per year", {
+  testthat::skip_if_not_installed("wpp2024")
+
+  out <- suppressMessages(get_demog_wpp("NGA", 2022:2025))
+
+  testthat::expect_named(out, as.character(2022:2025))
+  testthat::expect_identical(out[["2025"]]$year, 2025L)
+  cbr <- vapply(out, function(x) x$crude_birth_rate, numeric(1))
+  testthat::expect_false(anyNA(cbr))
 })

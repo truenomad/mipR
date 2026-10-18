@@ -7,14 +7,14 @@
 get_demog_wpp(country, year)
 }
 \arguments{
-\item{country}{Country name as used in wpp2024, for example \code{"Burundi"},
-\code{"Kenya"} or \code{"Nigeria"}. Case is ignored. If there is no exact match,
-the first partial match is used.}
+\item{country}{A single ISO3 code such as \code{"NGA"}, or a country name as
+used in wpp2024 such as \code{"Nigeria"}. Case is ignored. A name that does
+not match exactly is accepted if it matches part of exactly one name.}
 
-\item{year}{Reference year for the demographic data.}
+\item{year}{Reference year, or a vector of years.}
 }
 \value{
-A named list:
+For a single year, a named list:
 \describe{
 \item{age_distribution}{List with \code{DistributionValues} (cumulative
 share), \code{ResultScaleFactor} and \code{ResultValues} (age in days)}
@@ -25,24 +25,32 @@ share), \code{ResultScaleFactor} and \code{ResultValues} (age in days)}
 \item{country}{Matched country name}
 \item{year}{Reference year used}
 }
+For several years, a list of these, named by year.
 }
 \description{
 Pulls the single-year age structure and vital rates for one country from
 the UN World Population Prospects 2024 and returns an age distribution,
-crude birth and death rates, and a daily birth rate.
+crude birth and death rates, and a daily birth rate for each year.
 }
 \details{
 The age distribution is the cumulative share of the population by single
 year of age, with ages expressed in days, in the layout used by EMOD's
-\code{AgeDistribution}. If \code{year} is not available, the closest available year
-is used and a warning is shown.
+\code{AgeDistribution}.
+
+Years up to 2023 come from the WPP estimates and later years from the
+medium-variant projections, so 1950 to 2100 is covered. A year outside
+that range is replaced by the closest available year, with a warning.
 
 The data come from the wpp2024 package, which is not on CRAN. Install it
 with \code{remotes::install_github("PPgp/wpp2024")}.
 }
 \examples{
 \dontrun{
-demog <- get_demog_wpp("Burundi", 2022)
+demog <- get_demog_wpp("BDI", 2022)
 demog$crude_birth_rate
+
+# one entry per year
+demog_nga <- get_demog_wpp("Nigeria", 2000:2026)
+demog_nga[["2026"]]$crude_birth_rate
 }
 }
