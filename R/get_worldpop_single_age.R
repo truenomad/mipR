@@ -167,9 +167,14 @@ get_worldpop_single_age <- function(
         paste(bands$code, bands$upper, sep = "-")
       )
     )
+    age_label <- if (length(ages) > 1 && all(diff(ages) == 1)) {
+      paste(min(ages), max(ages), sep = "-")
+    } else {
+      paste(ages, collapse = ", ")
+    }
     cli::cli_alert_info(paste0(
-      "Splitting {cc} {yr} age groups ",
-      "{paste(group_labels, collapse = ', ')} into single years"
+      "Making single-year rasters for {cc} {yr}, ages {age_label}, ",
+      "from WorldPop age groups {paste(group_labels, collapse = ', ')}"
     ))
   }
 
