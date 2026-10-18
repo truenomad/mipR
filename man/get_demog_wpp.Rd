@@ -41,7 +41,7 @@ that range is replaced by the closest available year, with a warning.
 The single-year population in wpp2024 refers to 31 December of each year.
 
 Births and mortality rates refer to the calendar year. \code{mortality} can
-be passed to \code{\link[=reconstruct_cohorts]{reconstruct_cohorts()}} as its \code{mortality} argument and
+be passed to \code{\link[=reconstruct_birth_cohorts]{reconstruct_birth_cohorts()}} as its \code{mortality} argument and
 \code{rates} as its \code{births} argument.
 
 \code{age_days} is the upper end of each year of age in days, so

@@ -113,17 +113,19 @@
 #'   age = rep(0:1, 2),
 #'   pop = c(1180, 1130, 1200, 1150)
 #' )
-#' cohorts <- reconstruct_cohorts(pop, geography = "adm1", method = "uniform")
+#' cohorts <- reconstruct_birth_cohorts(
+#'   pop, geography = "adm1", method = "uniform"
+#' )
 #' head(cohorts$cohorts)
 #'
 #' # with mortality, so cohorts change only through deaths
 #' mortality <- data.frame(year = 2023, age = 0:100, mx = 0.01)
-#' cohorts <- reconstruct_cohorts(
+#' cohorts <- reconstruct_birth_cohorts(
 #'   pop, geography = "adm1", mortality = mortality
 #' )
 #' cohorts$anchor_check
 #' @export
-reconstruct_cohorts <- function(
+reconstruct_birth_cohorts <- function(
   data,
   geography,
   year = "year",

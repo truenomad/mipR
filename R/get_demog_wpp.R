@@ -12,7 +12,7 @@
 #' The single-year population in wpp2024 refers to 31 December of each year.
 #'
 #' Births and mortality rates refer to the calendar year. `mortality` can
-#' be passed to [reconstruct_cohorts()] as its `mortality` argument and
+#' be passed to [reconstruct_birth_cohorts()] as its `mortality` argument and
 #' `rates` as its `births` argument.
 #'
 #' `age_days` is the upper end of each year of age in days, so

@@ -1,4 +1,4 @@
-# reconstruct_cohorts ----------------------------------------------------------
+# reconstruct_birth_cohorts ----------------------------------------------------
 
 kano <- data.frame(
   adm1 = "Kano",
@@ -21,7 +21,9 @@ testthat::test_that(".make_anchors converts years of age to months", {
 
 testthat::test_that("a single anchor is spread over birth months by day", {
   pop <- data.frame(geography = "A", year = 2025, age = 0, pop = 366)
-  out <- reconstruct_cohorts(pop, geography = "geography", method = "uniform")
+  out <- reconstruct_birth_cohorts(
+    pop, geography = "geography", method = "uniform"
+  )
   cohorts <- out$cohorts
 
   # aged 0 on 1 January 2025 means born in 2024, a leap year
@@ -40,7 +42,7 @@ testthat::test_that("a single anchor is spread over birth months by day", {
 
 testthat::test_that("a 1 July reference date shifts the birth window", {
   pop <- data.frame(geography = "A", year = 2025, age = 0, pop = 365)
-  out <- reconstruct_cohorts(
+  out <- reconstruct_birth_cohorts(
     pop, geography = "geography", ref_date = "07-01", method = "uniform"
   )
 
@@ -50,7 +52,7 @@ testthat::test_that("a 1 July reference date shifts the birth window", {
 })
 
 testthat::test_that("cohorts are interpolated along the cohort", {
-  out <- reconstruct_cohorts(kano, geography = "adm1", method = "uniform")
+  out <- reconstruct_birth_cohorts(kano, geography = "adm1", method = "uniform")
 
   # the January 2024 cohort is age 0 on 1 Jan 2025 and has one anchor;
   # the January 2023 cohort is seen at age 0 (2024) and age 1 (2025)
@@ -70,7 +72,7 @@ testthat::test_that("cohorts are interpolated along the cohort", {
 })
 
 testthat::test_that("max_age_months and the date range limit the output", {
-  out <- reconstruct_cohorts(
+  out <- reconstruct_birth_cohorts(
     kano,
     geography = "adm1", method = "uniform",
     start = "2024-06", end = "2024-12", max_age_months = 6
@@ -83,33 +85,33 @@ testthat::test_that("max_age_months and the date range limit the output", {
   )
 })
 
-testthat::test_that("reconstruct_cohorts validates its input", {
+testthat::test_that("reconstruct_birth_cohorts validates its input", {
   testthat::expect_error(
-    reconstruct_cohorts(kano, geography = "adm2", method = "uniform"),
+    reconstruct_birth_cohorts(kano, geography = "adm2", method = "uniform"),
     "not in"
   )
   testthat::expect_error(
-    reconstruct_cohorts(kano, geography = "adm1", method = "survival"),
+    reconstruct_birth_cohorts(kano, geography = "adm1", method = "survival"),
     "mortality"
   )
   testthat::expect_error(
-    reconstruct_cohorts(
+    reconstruct_birth_cohorts(
       kano, geography = "adm1", method = "uniform", seasonality = 1:6
     ),
     "12 non-negative"
   )
   bad_age <- transform(kano, age = c(0, -1, 0, 1))
   testthat::expect_error(
-    reconstruct_cohorts(bad_age, geography = "adm1", method = "uniform"),
+    reconstruct_birth_cohorts(bad_age, geography = "adm1", method = "uniform"),
     "whole years"
   )
   bad_pop <- transform(kano, pop = c(1, NA, 1, 1))
   testthat::expect_error(
-    reconstruct_cohorts(bad_pop, geography = "adm1", method = "uniform"),
+    reconstruct_birth_cohorts(bad_pop, geography = "adm1", method = "uniform"),
     "zero or more"
   )
   testthat::expect_error(
-    reconstruct_cohorts(
+    reconstruct_birth_cohorts(
       kano, geography = "adm1", ref_date = "1 Jan", method = "uniform"
     ),
     "MM-DD"
@@ -139,7 +141,7 @@ testthat::test_that(".infant_survival reproduces infant death probability", {
 })
 
 testthat::test_that("survival method recovers births with no deaths", {
-  out <- reconstruct_cohorts(
+  out <- reconstruct_birth_cohorts(
     steady, geography = "adm1", method = "survival", mortality = no_deaths
   )
 
@@ -154,7 +156,7 @@ testthat::test_that("survival method recovers births with no deaths", {
 
 testthat::test_that("survival method follows cohorts through mortality", {
   deaths <- transform(no_deaths, mx = 0.02)
-  out <- reconstruct_cohorts(
+  out <- reconstruct_birth_cohorts(
     steady, geography = "adm1", method = "survival", mortality = deaths,
     start = "2024-01", end = "2024-12"
   )
@@ -167,10 +169,10 @@ testthat::test_that("survival method follows cohorts through mortality", {
 testthat::test_that("constrained method meets anchors within tolerance", {
   # the 2025 age-1 anchor is 20% above what the 2024 age-0 anchor implies
   uneven <- transform(steady, pop = c(365, 365, 366, 438))
-  survival <- reconstruct_cohorts(
+  survival <- reconstruct_birth_cohorts(
     uneven, geography = "adm1", method = "survival", mortality = no_deaths
   )
-  constrained <- reconstruct_cohorts(
+  constrained <- reconstruct_birth_cohorts(
     uneven, geography = "adm1", method = "constrained",
     mortality = no_deaths, tolerance = 0.05
   )
@@ -193,7 +195,7 @@ testthat::test_that("constrained method meets anchors within tolerance", {
 
 testthat::test_that("cohorts past the last anchor follow the births trend", {
   births <- data.frame(year = 2023:2026, births = c(1, 1, 1, 2))
-  out <- reconstruct_cohorts(
+  out <- reconstruct_birth_cohorts(
     steady, geography = "adm1", method = "survival", mortality = no_deaths,
     births = births, end = "2026-06"
   )
@@ -213,7 +215,7 @@ testthat::test_that("cohorts past the last anchor follow the births trend", {
 
 testthat::test_that("seasonality shifts births between months", {
   season <- c(2, rep(1, 11))
-  out <- reconstruct_cohorts(
+  out <- reconstruct_birth_cohorts(
     steady, geography = "adm1", method = "survival", mortality = no_deaths,
     seasonality = season
   )

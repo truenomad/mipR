@@ -34,9 +34,9 @@
 * `get_boundaries()` keeps each download as a single file in `cache_dir`,
   with no subfolders and the source at the end of the filename, and reads
   shapefiles directly from their zip archives.
-* Added `reconstruct_cohorts()` to rebuild the population by month of birth
-  and calendar month from annual population by single year of age (#8). The
-  `"uniform"` method spreads each anchor over its birth months; `"survival"`
+* Added `reconstruct_birth_cohorts()` to rebuild the population by month of
+  birth and calendar month from annual population by single year of age
+  (#8). The `"uniform"` method spreads each anchor over its birth months; `"survival"`
   estimates births by month and carries cohorts forward with monthly
   survival from WPP mortality; `"constrained"` (the default) reweights
   anchors so that outlying ones pull the fit less. Cohorts can be extended
@@ -46,7 +46,7 @@
 * Added `cohort_eligibility()` to work out the share of a monthly cohort
   eligible on a vaccination date or during a campaign.
 * `get_demog_wpp()` also returns births and single-age mortality rates for
-  use in `reconstruct_cohorts()`.
+  use in `reconstruct_birth_cohorts()`.
 * `extract_raster()` gains `pattern` to choose which files in a folder are
   used, and keeps the `age` column when only some files carry an age.
 * `get_worldpop_single_age()` names rasters for both sexes
