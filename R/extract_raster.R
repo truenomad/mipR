@@ -31,7 +31,8 @@
 #'   `c("adm0", "adm1", "adm2")`.
 #' @param fun Summary statistic or statistics passed to
 #'   [exactextractr::exact_extract()]: `"sum"` (default, for counts such as
-#'   population), `"mean"`, `"median"`, `"min"` or `"max"`.
+#'   population, rounded to whole numbers), `"mean"`, `"median"`, `"min"` or
+#'   `"max"`.
 #' @param pattern Regular expression for the files to use when `rasters` is
 #'   a directory, matched against the filenames (case is ignored). Default
 #'   `"\\.tiff?$"`, every `.tif` and `.tiff` file. For example,
@@ -111,6 +112,9 @@ extract_raster <- function(
         fun = fun, force_df = TRUE, progress = FALSE
       )
       names(stats) <- fun
+      if ("sum" %in% fun) {
+        stats$sum <- round(stats$sum)
+      }
       out <- cbind(
         ids,
         file_info[rep(i, nrow(ids)), , drop = FALSE],

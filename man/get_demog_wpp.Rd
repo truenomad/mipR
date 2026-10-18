@@ -14,28 +14,35 @@ not match exactly is accepted if it matches part of exactly one name.}
 \item{year}{Reference year, or a vector of years.}
 }
 \value{
-A list of two data frames:
+A list of three data frames:
 \describe{
 \item{rates}{One row per year with \code{country} (upper case), \code{iso3},
-\code{year},
-\code{crude_birth_rate} and \code{crude_death_rate} (per 1,000 population per
-year) and \code{birth_rate_daily} (births per person per day)}
+\code{year}, \code{births} (live births in the year), \code{crude_birth_rate} and
+\code{crude_death_rate} (per 1,000 population per year) and
+\code{birth_rate_daily} (births per person per day)}
 \item{age_distribution}{One row per year and single year of age (0 to
 100) with \code{country}, \code{iso3}, \code{year}, \code{age}, \code{proportion},
 \code{cumulative_proportion} and \code{age_days}}
+\item{mortality}{One row per year and single year of age (0 to 100)
+with \code{country}, \code{iso3}, \code{year}, \code{age} and \code{mx}, the central death
+rate for both sexes (deaths per person-year)}
 }
 }
 \description{
-Pulls the single-year age structure and vital rates for one country from
-the UN World Population Prospects 2024 and returns them as two data
-frames, one row per year for the rates and one row per year and age for
-the age distribution.
+Pulls the single-year age structure, vital rates and mortality for one
+country from the UN World Population Prospects 2024 and returns them as
+three data frames: rates by year, and age distribution and mortality by
+year and single year of age.
 }
 \details{
 Years up to 2023 come from the WPP estimates and later years from the
 medium-variant projections, so 1950 to 2100 is covered. A year outside
 that range is replaced by the closest available year, with a warning.
 The single-year population in wpp2024 refers to 31 December of each year.
+
+Births and mortality rates refer to the calendar year. \code{mortality} can
+be passed to \code{\link[=reconstruct_cohorts]{reconstruct_cohorts()}} as its \code{mortality} argument and
+\code{rates} as its \code{births} argument.
 
 \code{age_days} is the upper end of each year of age in days, so
 \code{cumulative_proportion} is the share of the population younger than

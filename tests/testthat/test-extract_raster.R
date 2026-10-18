@@ -122,3 +122,26 @@ testthat::test_that("extract_raster uses pattern to pick files in a folder", {
     "No raster files found"
   )
 })
+
+testthat::test_that("extract_raster rounds sums to whole numbers", {
+  r <- terra::rast(
+    nrows = 2, ncols = 2, xmin = 0, xmax = 2, ymin = 0, ymax = 2,
+    crs = "EPSG:4326", vals = c(1.2, 2.2, 3.2, 4.3)
+  )
+  path <- tempfile("pop_2020_", fileext = ".tif")
+  on.exit(unlink(path), add = TRUE)
+  suppressWarnings(terra::writeRaster(r, path))
+  polys <- sf::st_sf(
+    adm2 = "all",
+    geometry = sf::st_sfc(
+      sf::st_polygon(list(rbind(c(0, 0), c(2, 0), c(2, 2), c(0, 2), c(0, 0)))),
+      crs = 4326
+    )
+  )
+
+  out <- extract_raster(
+    path, polys, id_cols = "adm2", fun = c("sum", "mean"), quiet = TRUE
+  )
+  testthat::expect_identical(out$sum, 11)
+  testthat::expect_equal(out$mean, 2.725, tolerance = 1e-6)
+})

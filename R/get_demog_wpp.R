@@ -1,15 +1,19 @@
 #' Get Demographic Inputs from UN WPP 2024
 #'
-#' Pulls the single-year age structure and vital rates for one country from
-#' the UN World Population Prospects 2024 and returns them as two data
-#' frames, one row per year for the rates and one row per year and age for
-#' the age distribution.
+#' Pulls the single-year age structure, vital rates and mortality for one
+#' country from the UN World Population Prospects 2024 and returns them as
+#' three data frames: rates by year, and age distribution and mortality by
+#' year and single year of age.
 #'
 #' @details
 #' Years up to 2023 come from the WPP estimates and later years from the
 #' medium-variant projections, so 1950 to 2100 is covered. A year outside
 #' that range is replaced by the closest available year, with a warning.
 #' The single-year population in wpp2024 refers to 31 December of each year.
+#'
+#' Births and mortality rates refer to the calendar year. `mortality` can
+#' be passed to [reconstruct_cohorts()] as its `mortality` argument and
+#' `rates` as its `births` argument.
 #'
 #' `age_days` is the upper end of each year of age in days, so
 #' `cumulative_proportion` is the share of the population younger than
@@ -23,15 +27,18 @@
 #'   not match exactly is accepted if it matches part of exactly one name.
 #' @param year Reference year, or a vector of years.
 #'
-#' @return A list of two data frames:
+#' @return A list of three data frames:
 #'   \describe{
 #'     \item{rates}{One row per year with `country` (upper case), `iso3`,
-#'       `year`,
-#'       `crude_birth_rate` and `crude_death_rate` (per 1,000 population per
-#'       year) and `birth_rate_daily` (births per person per day)}
+#'       `year`, `births` (live births in the year), `crude_birth_rate` and
+#'       `crude_death_rate` (per 1,000 population per year) and
+#'       `birth_rate_daily` (births per person per day)}
 #'     \item{age_distribution}{One row per year and single year of age (0 to
 #'       100) with `country`, `iso3`, `year`, `age`, `proportion`,
 #'       `cumulative_proportion` and `age_days`}
+#'     \item{mortality}{One row per year and single year of age (0 to 100)
+#'       with `country`, `iso3`, `year`, `age` and `mx`, the central death
+#'       rate for both sexes (deaths per person-year)}
 #'   }
 #'
 #' @examples
@@ -58,7 +65,7 @@ get_demog_wpp <- function(country, year) {
     .load_wpp("popAge1dt")[, pop_cols],
     .load_wpp("popprojAge1dt")[, pop_cols]
   )
-  misc_cols <- c("country_code", "name", "year", "cbr", "cdr")
+  misc_cols <- c("country_code", "name", "year", "births", "cbr", "cdr")
   misc <- rbind(
     .load_wpp("misc1dt")[, misc_cols],
     .load_wpp("miscproj1dt")[, misc_cols]
@@ -68,6 +75,8 @@ get_demog_wpp <- function(country, year) {
   country_name <- .match_wpp_country(country, locations)
   pop_age <- pop_age[pop_age$name == country_name, ]
   misc <- misc[misc$name == country_name, ]
+  mx <- .load_wpp("mx1dt")
+  mx <- mx[mx$name == country_name, c("year", "age", "mxB")]
   iso3 <- suppressWarnings(countrycode::countrycode(
     pop_age$country_code[1], "un", "iso3c",
     custom_match = stats::setNames(names(.wpp_extra_m49), .wpp_extra_m49)
@@ -87,11 +96,12 @@ get_demog_wpp <- function(country, year) {
     integer(1)
   )
 
-  rates <- misc[match(years_used, misc$year), c("year", "cbr", "cdr")]
+  rates <- misc[match(years_used, misc$year), ]
   rates <- data.frame(
     country = toupper(country_name),
     iso3 = iso3,
     year = years_used,
+    births = rates$births * 1000,
     crude_birth_rate = rates$cbr,
     crude_death_rate = rates$cdr,
     birth_rate_daily = rates$cbr / 1000 / 365
@@ -113,12 +123,26 @@ get_demog_wpp <- function(country, year) {
   }))
   rownames(age_distribution) <- NULL
 
+  mx <- mx[mx$year %in% years_used, ]
+  mx <- mx[order(mx$year, mx$age), ]
+  mortality <- data.frame(
+    country = toupper(country_name),
+    iso3 = iso3,
+    year = as.integer(mx$year),
+    age = as.integer(mx$age),
+    mx = mx$mxB
+  )
+
   cli::cli_alert_success(
-    "{country_name}: WPP 2024 rates and age distribution for \\
+    "{country_name}: WPP 2024 rates, age distribution and mortality for \\
      {length(unique(years_used))} year{?s}"
   )
 
-  list(rates = rates, age_distribution = age_distribution)
+  list(
+    rates = rates,
+    age_distribution = age_distribution,
+    mortality = mortality
+  )
 }
 
 # internal helper: load one wpp2024 dataset as a data frame. the data files

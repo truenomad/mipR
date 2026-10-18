@@ -11,10 +11,14 @@ reconstruct_cohorts(
   age = "age",
   population = "pop",
   ref_date = "01-01",
+  method = c("constrained", "survival", "uniform"),
+  mortality = NULL,
+  births = NULL,
+  seasonality = NULL,
+  tolerance = 0.05,
   start = NULL,
   end = NULL,
-  max_age_months = 179,
-  method = "uniform"
+  max_age_months = 179
 )
 }
 \arguments{
@@ -34,28 +38,50 @@ year of age, such as the output of \code{\link[=extract_raster]{extract_raster()
 \item{ref_date}{Reference date of the estimates within each year, as
 \code{"MM-DD"}. Default \code{"01-01"}, the WorldPop R2025A reference date.}
 
+\item{method}{\code{"constrained"} (default), \code{"survival"} or \code{"uniform"}.}
+
+\item{mortality}{Data frame with \code{year}, \code{age} (single years) and \code{mx}
+(central death rate), such as \code{get_demog_wpp()$mortality}. Needed for
+\code{"survival"} and \code{"constrained"}. Years outside the table use the
+nearest year.}
+
+\item{births}{Optional data frame with \code{year} and \code{births}, such as
+\code{get_demog_wpp()$rates}, giving the national trend used to extend
+cohorts past the last anchor.}
+
+\item{seasonality}{Optional numeric vector of 12 relative birth
+frequencies, January to December. Default \code{NULL}, births spread evenly
+over the days of the year.}
+
+\item{tolerance}{Relative difference allowed between an anchor and the
+population rebuilt from the cohorts. Used by \code{"constrained"} and to flag
+anchors in \code{anchor_check}. Default \code{0.05}.}
+
 \item{start, end}{First and last calendar month of the output, as Dates or
 \code{"YYYY-MM"}. Default: the earliest birth month covered by the anchors,
 and the month of the latest anchor date.}
 
 \item{max_age_months}{Oldest age in months to keep in the output. Default
 \code{179} (under 15 years).}
-
-\item{method}{Reconstruction method. Only \code{"uniform"} is available.}
 }
 \value{
 A list of four data frames and a list:
 \describe{
 \item{cohorts}{One row per geography, birth month and calendar month:
 the \code{geography} columns, \code{birth_month}, \code{month} (first day of each
-month), \code{age_months} and \code{population}}
+month), \code{age_months}, \code{population} and \code{basis}}
+\item{births}{One row per geography and birth month with the
+estimated \code{births} and \code{basis} (not returned by \code{"uniform"})}
 \item{cohort_changes}{One row per cohort and pair of consecutive
-anchor dates: sizes at each date and \code{change}, the proportional
-change between them}
+anchor dates: the cohort size implied by each anchor,
+\code{observed_change}, \code{expected_change} from mortality (0 for
+\code{"uniform"}), and \code{unexplained_change}}
 \item{anchor_check}{Each anchor (geography, \code{ref_date}, \code{age_lower}
 and \code{age_upper} in months, and \code{population}) with the population
-rebuilt from the cohorts at its reference date, and the difference}
-\item{metadata}{The method and the assumptions used}
+rebuilt from the cohorts at its reference date, the difference, the
+relative difference and \code{within_tolerance}}
+\item{metadata}{The method, the assumptions used and, for
+\code{"constrained"}, the number of iterations}
 }
 }
 \description{
@@ -65,25 +91,56 @@ consistent across years. Each estimate (a geography, year and age) is an
 anchor for the cohorts it covers.
 }
 \details{
-This is the uniform method (version 0.1). For each anchor, births are
-assumed to be spread evenly by day over the birth-date window that the
-anchor's age group covers at its reference date. For example, people aged
-0 on 1 January 2025 were born from 1 January to 31 December 2024. Each
-monthly cohort's size at the anchor date is the daily density times the
-days in the month, so longer months hold more births. When two anchors
-observe the same cohort on the same date (because the reference date is
-not the first of a month), the observations are averaged by overlap.
+\strong{Anchors.} People aged \code{a} years at a reference date were born in the
+12 months before their \code{a}-th birthday. For example, people aged 0 on 1
+January 2025 were born from 1 January to 31 December 2024. Each anchor is
+shared out across the birth months in that window by day of birth,
+weighted by \code{seasonality} when given and, for the \code{survival} and
+\code{constrained} methods, by the share of each month's births expected to
+survive to the reference date.
 
-Between anchor dates, each cohort's size is interpolated linearly along
-the cohort, not by age, so a cohort is followed as it ages. Before its
-first anchor and after its last, the nearest anchor value is carried. No
-mortality is applied, so every change between anchors is reported in
-\code{cohort_changes} as an unexplained cohort change. Cohorts born after the
-last anchor date are not covered by any anchor and are left out.
+\strong{Methods.}
+\itemize{
+\item \code{"uniform"}: no births or mortality. Each cohort's size at each
+anchor date is taken from the anchors, interpolated linearly along the
+cohort between anchor dates and held constant before the first and
+after the last. Cohorts born after the last anchor date are left out.
+\item \code{"survival"}: births in each birth month are estimated by dividing each
+anchor's share by survival from birth to the reference date, averaged
+across the anchors that observe the cohort. The cohort is then carried
+forward from birth with monthly survival, so it changes only through
+mortality.
+\item \code{"constrained"}: starts from the \code{survival} births and reweights the
+anchors until the fit is stable. Each cohort's births are a weighted
+geometric mean of what its anchors imply. Anchors within \code{tolerance}
+of the fit keep full weight and anchors outside it are down-weighted
+in proportion to how far outside they are (Huber weights), so an
+outlying anchor pulls the fit less than in \code{"survival"}. Anchors still
+outside the tolerance are flagged in \code{anchor_check}.
+}
 
-The population of a cohort in a calendar month is its size on the 15th of
-that month. A cohort is present from its birth month, where \code{age_months}
-is 0.
+\strong{Survival.} Monthly survival comes from \code{mortality}, single-age central
+death rates by calendar year. From age 1 the monthly survival is
+\code{exp(-mx / 12)}. In the first year, the infant death probability is
+derived from \code{mx} at age 0 with the Coale-Demeny separation factor, half
+of infant deaths fall in the first month of life, and the rest are spread
+evenly over the remaining 11 months. Mortality is national, so every
+geography uses the same survival.
+
+\strong{Cohorts after the last anchor.} With \code{survival} or \code{constrained},
+cohorts born after a geography's last anchored birth month and up to
+\code{end} are extended from the births of its last 12 anchored months. They
+follow the national trend in \code{births} when given, and \code{seasonality}. These
+cohorts have \code{basis = "extended"}; all others are \code{"anchored"}.
+
+\strong{What is not modelled.} Migration is not modelled. A change in a cohort
+between anchors that births and survival do not explain is reported as an
+unexplained cohort change in \code{cohort_changes}. It can come from
+migration or from differences between the annual estimates, and is not
+labelled as migration.
+
+The population of a cohort in a calendar month is its size in that month;
+a cohort is present from its birth month, where \code{age_months} is 0.
 }
 \examples{
 pop <- data.frame(
@@ -92,7 +149,13 @@ pop <- data.frame(
   age = rep(0:1, 2),
   pop = c(1180, 1130, 1200, 1150)
 )
-cohorts <- reconstruct_cohorts(pop, geography = "adm1")
+cohorts <- reconstruct_cohorts(pop, geography = "adm1", method = "uniform")
 head(cohorts$cohorts)
-cohorts$cohort_changes
+
+# with mortality, so cohorts change only through deaths
+mortality <- data.frame(year = 2023, age = 0:100, mx = 0.01)
+cohorts <- reconstruct_cohorts(
+  pop, geography = "adm1", mortality = mortality
+)
+cohorts$anchor_check
 }

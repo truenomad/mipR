@@ -25,7 +25,8 @@ directory whose files matching \code{pattern} are used.}
 
 \item{fun}{Summary statistic or statistics passed to
 \code{\link[exactextractr:exact_extract]{exactextractr::exact_extract()}}: \code{"sum"} (default, for counts such as
-population), \code{"mean"}, \code{"median"}, \code{"min"} or \code{"max"}.}
+population, rounded to whole numbers), \code{"mean"}, \code{"median"}, \code{"min"} or
+\code{"max"}.}
 
 \item{pattern}{Regular expression for the files to use when \code{rasters} is
 a directory, matched against the filenames (case is ignored). Default
