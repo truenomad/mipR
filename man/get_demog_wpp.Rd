@@ -34,7 +34,7 @@ the age distribution.
 Years up to 2023 come from the WPP estimates and later years from the
 medium-variant projections, so 1950 to 2100 is covered. A year outside
 that range is replaced by the closest available year, with a warning.
-The single-year population in wpp2024 refers to the end of each year.
+The single-year population in wpp2024 refers to 31 December of each year.
 
 \code{age_days} is the upper end of each year of age in days, so
 \code{cumulative_proportion} is the share of the population younger than

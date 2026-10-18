@@ -9,6 +9,39 @@ testthat::test_that(".worldpop_band_lower depends on the release period", {
   )
 })
 
+testthat::test_that(".worldpop_reference_date labels each product", {
+  r2025a <- .worldpop_reference_date("R2025A", 2025)
+  testthat::expect_identical(r2025a$date, "01-01")
+  testthat::expect_true(r2025a$documented)
+
+  r2024b <- .worldpop_reference_date("R2024B", 2020)
+  testthat::expect_identical(r2024b$date, "01-01")
+  testthat::expect_false(r2024b$documented)
+
+  legacy <- .worldpop_reference_date("R2025A", 2010)
+  testthat::expect_identical(legacy$product, "legacy")
+  testthat::expect_identical(legacy$date, "07-01")
+  testthat::expect_false(legacy$documented)
+})
+
+testthat::test_that(".wpp_pop_at aligns WPP years with the reference date", {
+  # wpp2024 package year Y is 31 December Y
+  wpp_cc <- data.frame(
+    year = rep(2009:2011, each = 2),
+    age = rep(0:1, 3),
+    pop = c(10, 20, 30, 40, 50, 60)
+  )
+
+  jan <- .wpp_pop_at(wpp_cc, 2011, "01-01", "pop")
+  testthat::expect_identical(jan$pop, c(30, 40))
+
+  jul <- .wpp_pop_at(wpp_cc, 2010, "07-01", "pop")
+  testthat::expect_identical(jul$pop, c(20, 30))
+
+  missing <- .wpp_pop_at(wpp_cc, 2009, "01-01", "pop")
+  testthat::expect_identical(nrow(missing), 0L)
+})
+
 testthat::test_that("get_worldpop_single_age validates ages", {
   testthat::skip_if_not_installed("wpp2024")
 

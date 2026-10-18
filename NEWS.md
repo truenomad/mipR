@@ -21,3 +21,6 @@
   Southampton mirror when the FTP mirror cannot deliver them.
 * Added `extract_raster()` to summarise rasters over boundary polygons,
   reading the year, month and single year of age from each filename.
+* `get_worldpop_single_age()` now takes WPP age shares at the WorldPop
+  reference date: 1 January for R2025A and R2024B, and an assumed 1 July for
+  the legacy 2000-2020 data.

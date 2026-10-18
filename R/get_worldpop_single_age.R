@@ -6,6 +6,31 @@
   c(0, 1, seq(5, top, by = 5))
 }
 
+# internal helper: reference date of a WorldPop age-sex product. R2025A
+# states 1 January; R2024B and the legacy data do not state a date
+#' @noRd
+.worldpop_reference_date <- function(release, year) {
+  if (year < 2015) {
+    return(list(product = "legacy", date = "07-01", documented = FALSE))
+  }
+  list(product = release, date = "01-01", documented = release == "R2025A")
+}
+
+# internal helper: WPP population by age at a WorldPop reference date. the
+# wpp2024 package's year Y is 31 December Y, so 1 January Y is package year
+# Y-1 and 1 July Y is the mean of package years Y-1 and Y
+#' @noRd
+.wpp_pop_at <- function(wpp_cc, year, ref_date, wpp_col) {
+  years <- if (ref_date == "01-01") year - 1 else c(year - 1, year)
+  rows <- wpp_cc[wpp_cc$year %in% years, ]
+  if (length(unique(rows$year)) < length(years)) {
+    return(rows[0, c("age", wpp_col)])
+  }
+  out <- stats::aggregate(rows[[wpp_col]], list(age = rows$age), mean)
+  names(out)[2] <- wpp_col
+  out
+}
+
 #' Make Single-Year Age Rasters from WorldPop Age Groups
 #'
 #' Downloads the WorldPop age-group rasters that cover the requested ages and
@@ -24,6 +49,14 @@
 #' The top group is 90+ for 2015 onwards and 80+ for earlier years. Within
 #' that group, ages up to 100 can be requested; WPP age 100 means 100 and
 #' over.
+#'
+#' WorldPop and WPP are matched at the WorldPop reference date. R2025A
+#' refers to 1 January of each year, as stated in its release statement.
+#' R2024B does not state a date and is also taken as 1 January. The legacy
+#' 2000-2020 data do not state a date and are taken as 1 July. The wpp2024
+#' package gives population at 31 December of each year, so 1 January uses
+#' the previous year's WPP population and 1 July uses the mean of the
+#' previous and current year.
 #'
 #' Group rasters are kept in `out_dir` and reused by later calls. Years
 #' before 2015 use the legacy 2000-2020 dataset (1km, male and female
@@ -103,6 +136,20 @@ get_worldpop_single_age <- function(
   )
   locations <- unique(wpp[, c("country_code", "name")])
 
+  if (!quiet) {
+    refs <- unique(lapply(
+      unique(years), .worldpop_reference_date,
+      release = release
+    ))
+    for (ref in refs[!vapply(refs, function(r) r$documented, logical(1))]) {
+      ref_label <- if (ref$date == "01-01") "1 January" else "1 July"
+      cli::cli_alert_info(paste0(
+        "WorldPop {ref$product} reference date not documented; ",
+        "assuming {ref_label}"
+      ))
+    }
+  }
+
   paths <- character(0)
   for (cc in toupper(unique(country_codes))) {
     wpp_cc <- wpp[wpp$name == .match_wpp_country(cc, locations), ]
@@ -121,8 +168,10 @@ get_worldpop_single_age <- function(
         next
       }
 
+      ref <- .worldpop_reference_date(release, yr)
       .split_age_groups(
-        cc, yr, ages[todo], out_fnames[todo], wpp_cc[wpp_cc$year == yr, ],
+        cc, yr, ages[todo], out_fnames[todo],
+        .wpp_pop_at(wpp_cc, yr, ref$date, wpp_col),
         wpp_col, sex, resolution, release, out_dir, quiet
       )
     }
@@ -167,13 +216,15 @@ get_worldpop_single_age <- function(
         paste(bands$code, bands$upper, sep = "-")
       )
     )
-    age_label <- if (length(ages) > 1 && all(diff(ages) == 1)) {
-      paste(min(ages), max(ages), sep = "-")
+    age_label <- if (length(ages) == 1) {
+      paste("age", ages)
+    } else if (all(diff(ages) == 1)) {
+      paste0("ages ", min(ages), "-", max(ages))
     } else {
-      paste(ages, collapse = ", ")
+      paste("ages", paste(ages, collapse = ", "))
     }
     cli::cli_alert_info(paste0(
-      "Making single-year rasters for {cc} {yr}, ages {age_label}, ",
+      "Making single-year rasters for {cc} {yr}, {age_label}, ",
       "from WorldPop age groups {paste(group_labels, collapse = ', ')}"
     ))
   }
