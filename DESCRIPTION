@@ -13,6 +13,18 @@ Description: Provides a framework for reconstructing and projecting
     subnational immunity estimation, uncertainty analysis, and evaluation
     of alternative vaccination scenarios.
 License: MIT + file LICENSE
+Depends: 
+    R (>= 4.1.0)
+Imports: 
+    cli,
+    curl,
+    dplyr,
+    httr2,
+    sf,
+    stats,
+    terra,
+    tools,
+    utils
 Suggests: 
     knitr,
     rmarkdown,
