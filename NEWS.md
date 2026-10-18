@@ -11,7 +11,8 @@
 * Added `get_ihme_mcv()` to download the IHME geospatial MCV1 and MCV2
   coverage estimates and methods documentation, using the latest release.
 * Added `get_demog_wpp()` to get the age distribution, crude birth and
-  death rates and daily birth rate for a country from UN WPP 2024.
+  death rates and daily birth rate from UN WPP 2024, for a country given by
+  ISO3 code or name and for one or more years from 1950 to 2100.
 * `get_worldpop_age_band()` now keeps the individual band rasters by default
   (`keep_band_files = TRUE`), and gains `combine = FALSE` to keep only the
   band rasters without writing the combined raster.
