@@ -603,10 +603,12 @@ get_worldpop <- function(
 #'   saved. Default: ".".
 #' @param quiet Logical; if TRUE, suppresses progress messages
 #'   (default: FALSE).
-#' @param keep_band_files Logical. If FALSE (default), the individual
-#'   per-band rasters downloaded to build each combined output are
-#'   deleted once the combined raster is written. Set TRUE to keep them,
-#'   e.g. for reuse across calls with overlapping age ranges.
+#' @param keep_band_files Logical. If TRUE (default), the individual
+#'   per-band rasters downloaded to build each combined output are kept in
+#'   `out_dir`. Set FALSE to delete them once the combined raster is written.
+#' @param combine Logical. If TRUE (default), the bands are summed into one
+#'   raster for the age range. Set FALSE to keep only the individual band
+#'   rasters and not write the combined raster.
 #'
 #' @details
 #' ## Data Source
@@ -701,7 +703,8 @@ get_worldpop_age_band <- function(
   release = "R2025A",
   out_dir = ".",
   quiet = FALSE,
-  keep_band_files = FALSE
+  keep_band_files = TRUE,
+  combine = TRUE
 ) {
   sex <- match.arg(sex, choices = c("both", "m", "f"))
   resolution <- match.arg(resolution, choices = c("1km", "100m"))
@@ -821,8 +824,9 @@ get_worldpop_age_band <- function(
         )
       }
     } else if (!quiet) {
+      action <- if (combine) "Combining" else "Downloading"
       cli::cli_alert_info(
-        "Combining bands: {paste(band_labels, collapse = ', ')}"
+        "{action} bands: {paste(band_labels, collapse = ', ')}"
       )
     }
 
@@ -839,7 +843,7 @@ get_worldpop_age_band <- function(
       )
     )
 
-    if (file.exists(out_fname)) {
+    if (combine && file.exists(out_fname)) {
       if (!quiet) {
         cli::cli_alert_info(
           "Skipping {basename(out_fname)} (already exists)"
@@ -904,6 +908,15 @@ get_worldpop_age_band <- function(
           "skipping"
         )
       )
+      next
+    }
+
+    if (!combine) {
+      if (!quiet) {
+        cli::cli_alert_success(
+          "Band files: {.file {basename(plan_files[[i]]$dests)}}"
+        )
+      }
       next
     }
 

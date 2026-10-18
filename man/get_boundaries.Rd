@@ -21,13 +21,13 @@ get_boundaries(
 string such as \code{"ADM2"}. Default is \code{2}.}
 
 \item{source}{Boundary provider: \code{"ocha"} (default), \code{"geoboundaries"},
-\code{"gadm"} or \code{"who"}.}
+\code{"gadm"} or \code{"who"}. Case is ignored, so \code{"WHO"} also works.}
 
 \item{cache}{Logical. If \code{TRUE} (default), downloaded files are stored in
 \code{cache_dir} and reused by later calls.}
 
 \item{cache_dir}{Directory for cached downloads. Defaults to the user cache
-directory for mipR given by \code{\link[tools:userdir]{tools::R_user_dir()}}.}
+directory for mipR given by \code{\link[tools:R_user_dir]{tools::R_user_dir()}}.}
 
 \item{latest}{Logical, used only when \code{source = "who"}. If \code{TRUE}
 (default), only current boundaries are returned.}

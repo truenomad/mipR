@@ -657,7 +657,7 @@ testthat::test_that("age band: uses 't' total for both sexes from 2015", {
   testthat::expect_false(file.exists(f_fn))
 })
 
-testthat::test_that("age band: drops band files unless keep_band_files", {
+testthat::test_that("age band: keeps band files unless told not to", {
   testthat::skip_if_not(
     requireNamespace("terra", quietly = TRUE),
     "terra package not available"
@@ -670,33 +670,57 @@ testthat::test_that("age band: drops band files unless keep_band_files", {
     t_fname
   }
 
-  # default: band file is deleted after the combined raster is written
-  drop_dir <- setup_temp_dir()
-  on.exit(unlink(drop_dir, recursive = TRUE), add = TRUE)
-  t_fname <- stage_t_raster(drop_dir)
-  get_worldpop_age_band(
-    "GIN",
-    years = 2020, age_range = c(0, 0),
-    out_dir = drop_dir, quiet = TRUE
-  )
-  testthat::expect_true(
-    file.exists(file.path(drop_dir, "gin_total_00_00_2020.tif"))
-  )
-  testthat::expect_false(file.exists(t_fname))
-
-  # keep_band_files = TRUE: band file is retained
+  # default: band file is kept next to the combined raster
   keep_dir <- setup_temp_dir()
   on.exit(unlink(keep_dir, recursive = TRUE), add = TRUE)
   t_fname_kept <- stage_t_raster(keep_dir)
   get_worldpop_age_band(
     "GIN",
     years = 2020, age_range = c(0, 0),
-    out_dir = keep_dir, quiet = TRUE, keep_band_files = TRUE
+    out_dir = keep_dir, quiet = TRUE
   )
   testthat::expect_true(
     file.exists(file.path(keep_dir, "gin_total_00_00_2020.tif"))
   )
   testthat::expect_true(file.exists(t_fname_kept))
+
+  # keep_band_files = FALSE: band file is deleted
+  drop_dir <- setup_temp_dir()
+  on.exit(unlink(drop_dir, recursive = TRUE), add = TRUE)
+  t_fname <- stage_t_raster(drop_dir)
+  get_worldpop_age_band(
+    "GIN",
+    years = 2020, age_range = c(0, 0),
+    out_dir = drop_dir, quiet = TRUE, keep_band_files = FALSE
+  )
+  testthat::expect_true(
+    file.exists(file.path(drop_dir, "gin_total_00_00_2020.tif"))
+  )
+  testthat::expect_false(file.exists(t_fname))
+})
+
+testthat::test_that("age band: combine = FALSE writes no combined raster", {
+  testthat::skip_if_not(
+    requireNamespace("terra", quietly = TRUE),
+    "terra package not available"
+  )
+
+  band_dir <- setup_temp_dir()
+  on.exit(unlink(band_dir, recursive = TRUE), add = TRUE)
+  r <- suppressWarnings(terra::rast(nrows = 2, ncols = 2, vals = 1))
+  t_fname <- file.path(band_dir, "gin_t_00_2020_CN_1km_UA_v1.tif")
+  suppressWarnings(terra::writeRaster(r, t_fname))
+
+  get_worldpop_age_band(
+    "GIN",
+    years = 2020, age_range = c(0, 0),
+    out_dir = band_dir, quiet = TRUE, combine = FALSE,
+    keep_band_files = FALSE
+  )
+  testthat::expect_false(
+    file.exists(file.path(band_dir, "gin_total_00_00_2020.tif"))
+  )
+  testthat::expect_true(file.exists(t_fname))
 })
 
 testthat::test_that(".build_age_band_filename builds output names", {

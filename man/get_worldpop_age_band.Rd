@@ -13,7 +13,8 @@ get_worldpop_age_band(
   release = "R2025A",
   out_dir = ".",
   quiet = FALSE,
-  keep_band_files = FALSE
+  keep_band_files = TRUE,
+  combine = TRUE
 )
 }
 \arguments{
@@ -48,10 +49,13 @@ saved. Default: ".".}
 \item{quiet}{Logical; if TRUE, suppresses progress messages
 (default: FALSE).}
 
-\item{keep_band_files}{Logical. If FALSE (default), the individual
-per-band rasters downloaded to build each combined output are
-deleted once the combined raster is written. Set TRUE to keep them,
-e.g. for reuse across calls with overlapping age ranges.}
+\item{keep_band_files}{Logical. If TRUE (default), the individual
+per-band rasters downloaded to build each combined output are kept in
+\code{out_dir}. Set FALSE to delete them once the combined raster is written.}
+
+\item{combine}{Logical. If TRUE (default), the bands are summed into one
+raster for the age range. Set FALSE to keep only the individual band
+rasters and not write the combined raster.}
 }
 \value{
 No return value. Files saved to output directory with pattern:

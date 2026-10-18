@@ -36,6 +36,13 @@ testthat::test_that("get_boundaries rejects unknown sources", {
   )
 })
 
+testthat::test_that("get_boundaries accepts source in any case", {
+  testthat::expect_error(
+    get_boundaries("KEN", level = 3, source = "WHO"),
+    "Invalid"
+  )
+})
+
 testthat::test_that(".check_level accepts numbers and ADM strings", {
   testthat::expect_identical(.check_level(2, "ocha"), 2L)
   testthat::expect_identical(.check_level("ADM1", "gadm"), 1L)
