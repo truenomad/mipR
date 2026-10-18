@@ -36,7 +36,7 @@
 #' @param level Administrative level, as a number (`0`, `1`, `2`, ...) or a
 #'   string such as `"ADM2"`. Default is `2`.
 #' @param source Boundary provider: `"ocha"` (default), `"geoboundaries"`,
-#'   `"gadm"` or `"who"`.
+#'   `"gadm"` or `"who"`. Case is ignored, so `"WHO"` also works.
 #' @param cache Logical. If `TRUE` (default), downloaded files are stored in
 #'   `cache_dir` and reused by later calls.
 #' @param cache_dir Directory for cached downloads. Defaults to the user cache
@@ -87,7 +87,10 @@ get_boundaries <- function(
   latest = TRUE,
   quiet = FALSE
 ) {
-  source <- match.arg(source)
+  source <- match.arg(
+    tolower(source),
+    c("ocha", "geoboundaries", "gadm", "who")
+  )
   country <- .check_country(country)
   level <- .check_level(level, source)
 
@@ -157,7 +160,11 @@ list_boundaries <- function(
   country,
   source = c("ocha", "geoboundaries", "gadm", "who")
 ) {
-  source <- match.arg(source, several.ok = TRUE)
+  source <- match.arg(
+    tolower(source),
+    c("ocha", "geoboundaries", "gadm", "who"),
+    several.ok = TRUE
+  )
   country <- .check_country(country)
 
   list_one <- list(

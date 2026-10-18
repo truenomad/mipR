@@ -21,7 +21,7 @@ get_boundaries(
 string such as \code{"ADM2"}. Default is \code{2}.}
 
 \item{source}{Boundary provider: \code{"ocha"} (default), \code{"geoboundaries"},
-\code{"gadm"} or \code{"who"}.}
+\code{"gadm"} or \code{"who"}. Case is ignored, so \code{"WHO"} also works.}
 
 \item{cache}{Logical. If \code{TRUE} (default), downloaded files are stored in
 \code{cache_dir} and reused by later calls.}
