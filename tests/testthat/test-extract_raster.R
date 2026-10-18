@@ -145,3 +145,115 @@ testthat::test_that("extract_raster rounds sums to whole numbers", {
   testthat::expect_identical(out$sum, 11)
   testthat::expect_equal(out$mean, 2.725, tolerance = 1e-6)
 })
+
+# population weights -----------------------------------------------------------
+
+weight_fixture <- function(dir) {
+  value <- terra::rast(
+    nrows = 2, ncols = 2, xmin = 0, xmax = 2, ymin = 0, ymax = 2,
+    crs = "EPSG:4326", vals = c(0.1, 0.2, 0.3, 0.4)
+  )
+  for (yr in 2020:2021) {
+    suppressWarnings(terra::writeRaster(
+      value, file.path(dir, paste0("mcv1_", yr, ".tif"))
+    ))
+  }
+  pop_dir <- file.path(dir, "pop")
+  dir.create(pop_dir)
+  # 2020: all weight on the 0.4 cell; 2021: even weights at finer resolution
+  pop_2020 <- terra::rast(value, vals = c(0, 0, 0, 10))
+  pop_2021 <- terra::rast(
+    nrows = 4, ncols = 4, xmin = 0, xmax = 2, ymin = 0, ymax = 2,
+    crs = "EPSG:4326", vals = 1
+  )
+  suppressWarnings(terra::writeRaster(
+    pop_2020, file.path(pop_dir, "nga_pop_2020.tif")
+  ))
+  suppressWarnings(terra::writeRaster(
+    pop_2021, file.path(pop_dir, "nga_pop_2021.tif")
+  ))
+  polys <- sf::st_sf(
+    adm2 = "all",
+    geometry = sf::st_sfc(
+      sf::st_polygon(list(rbind(c(0, 0), c(2, 0), c(2, 2), c(0, 2), c(0, 0)))),
+      crs = 4326
+    )
+  )
+  list(values = dir, pop = pop_dir, polys = polys)
+}
+
+testthat::test_that("extract_raster weights values by population by year", {
+  dir <- tempfile("weights_")
+  dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  fx <- weight_fixture(dir)
+
+  out <- extract_raster(
+    fx$values, fx$polys,
+    id_cols = "adm2", pattern = "^mcv1_",
+    fun = c("mean", "weighted_mean", "weighted_median"),
+    pop_rasters = fx$pop, quiet = TRUE
+  )
+
+  testthat::expect_named(
+    out,
+    c("adm2", "year", "mean", "weighted_mean", "weighted_median", "pop_sum")
+  )
+  testthat::expect_equal(out$mean, c(0.25, 0.25))
+  testthat::expect_equal(out$weighted_mean, c(0.4, 0.25))
+  testthat::expect_equal(out$weighted_median[1], 0.4)
+  testthat::expect_identical(out$pop_sum, c(10, 16))
+})
+
+testthat::test_that("extract_raster uses the nearest population year", {
+  dir <- tempfile("weights_")
+  dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  fx <- weight_fixture(dir)
+  file.rename(
+    file.path(fx$values, "mcv1_2021.tif"),
+    file.path(fx$values, "mcv1_2023.tif")
+  )
+
+  testthat::expect_warning(
+    out <- extract_raster(
+      fx$values, fx$polys,
+      id_cols = "adm2", pattern = "^mcv1_",
+      fun = "weighted_mean", pop_rasters = fx$pop, quiet = TRUE
+    ),
+    "nearest year"
+  )
+  testthat::expect_equal(out$weighted_mean[out$year == 2023], 0.25)
+})
+
+testthat::test_that("extract_raster checks weighted inputs", {
+  dir <- tempfile("weights_")
+  dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  fx <- weight_fixture(dir)
+
+  testthat::expect_error(
+    extract_raster(
+      fx$values, fx$polys,
+      id_cols = "adm2", pattern = "^mcv1_", fun = "weighted_mean"
+    ),
+    "pop_rasters"
+  )
+  file.copy(
+    file.path(fx$pop, "nga_pop_2020.tif"),
+    file.path(fx$pop, "nga_pop_2020_copy.tif")
+  )
+  testthat::expect_error(
+    extract_raster(
+      fx$values, fx$polys,
+      id_cols = "adm2", pattern = "^mcv1_",
+      fun = "weighted_mean", pop_rasters = fx$pop, quiet = TRUE
+    ),
+    "share year"
+  )
+})
+
+testthat::test_that(".weighted_median finds the half-weight value", {
+  testthat::expect_identical(.weighted_median(c(3, 1, 2), c(1, 1, 5)), 2)
+  testthat::expect_identical(.weighted_median(c(1, 2), c(0, 0)), NA_real_)
+})

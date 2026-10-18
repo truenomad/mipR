@@ -56,3 +56,9 @@
   temporary folder and deletes them, so `out_dir` holds only the single-year
   rasters.
 * `extract_raster()` rounds `sum` to whole numbers.
+* `extract_raster()` gains `pop_rasters` and `pop_pattern` for population
+  weighting. `fun` now also accepts `"weighted_mean"` and
+  `"weighted_median"`, which weight each value cell by the population it
+  holds, with population rasters matched to value rasters by year (or the
+  nearest year). The output then includes `pop_sum`, the population in each
+  polygon.

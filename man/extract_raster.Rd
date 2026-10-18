@@ -10,6 +10,8 @@ extract_raster(
   id_cols = c("adm0", "adm1", "adm2"),
   fun = "sum",
   pattern = "\\\\.tiff?$",
+  pop_rasters = NULL,
+  pop_pattern = "\\\\.tiff?$",
   quiet = FALSE
 )
 }
@@ -23,10 +25,10 @@ directory whose files matching \code{pattern} are used.}
 \item{id_cols}{Columns of \code{shapefile} to keep in the output. Default
 \code{c("adm0", "adm1", "adm2")}.}
 
-\item{fun}{Summary statistic or statistics passed to
-\code{\link[exactextractr:exact_extract]{exactextractr::exact_extract()}}: \code{"sum"} (default, for counts such as
-population, rounded to whole numbers), \code{"mean"}, \code{"median"}, \code{"min"} or
-\code{"max"}.}
+\item{fun}{Statistic or statistics to compute: \code{"sum"} (default, for
+counts such as population, rounded to whole numbers), \code{"mean"},
+\code{"median"}, \code{"min"}, \code{"max"}, \code{"weighted_mean"} or \code{"weighted_median"}.
+The weighted statistics need \code{pop_rasters}.}
 
 \item{pattern}{Regular expression for the files to use when \code{rasters} is
 a directory, matched against the filenames (case is ignored). Default
@@ -34,17 +36,26 @@ a directory, matched against the filenames (case is ignored). Default
 \code{"_age\\\\d+_\\\\d{4}\\\\.tif$"} keeps only the single-year rasters
 written by \code{\link[=get_worldpop_single_age]{get_worldpop_single_age()}}.}
 
+\item{pop_rasters}{Optional population raster file paths, or a single
+directory whose files matching \code{pop_pattern} are used, for the weighted
+statistics. Default \code{NULL}.}
+
+\item{pop_pattern}{Regular expression for the files to use when
+\code{pop_rasters} is a directory. Default \code{"\\\\.tiff?$"}.}
+
 \item{quiet}{Logical. If \code{TRUE}, suppresses progress messages.}
 }
 \value{
-A data frame with the \code{id_cols}, any of \code{year},
-\code{month}, \code{age} and \code{layer} that apply, and one column per statistic in
-\code{fun}.
+A data frame with the \code{id_cols}, any of \code{year}, \code{month}, \code{age}
+and \code{layer} that apply, one column per statistic in \code{fun}, and
+\code{pop_sum} (rounded) when \code{pop_rasters} is given.
 }
 \description{
 Summarises one or more rasters over the polygons of a boundary layer and
 returns one row per polygon, file and layer. The year, month and single
-year of age are read from each filename.
+year of age are read from each filename. With \code{pop_rasters}, values can
+also be weighted by population, for example coverage or prevalence
+weighted by the number of people in each cell.
 }
 \details{
 Filenames are read as follows:
@@ -65,6 +76,18 @@ Files without a date get no time columns. For a multi-layer raster
 every layer is extracted, and a layer name that is a year (for example
 \code{2010} or \code{mcv1_2010}) overrides the year in the filename.
 
+\strong{Population weights.} \code{"weighted_mean"} and \code{"weighted_median"} need
+\code{pop_rasters}. A single population raster is used for every value
+raster. With several, the year of each value raster (or layer) is
+matched to the population raster with the same year, read from the
+filenames in the same way. When no population raster has that year, the
+nearest year is used and a warning lists the substitutions. The
+population raster is cropped to the boundaries, projected to the value
+raster's CRS if needed, and summed onto the value raster's grid, so each
+value cell is weighted by the population it holds. Cells without
+population get no weight. \code{pop_sum} is the population in each polygon,
+taken from the population raster at its own resolution.
+
 The boundaries are transformed to the raster's CRS when they differ.
 }
 \examples{
@@ -74,10 +97,18 @@ paths <- get_worldpop_single_age("NGA", 2025, ages = 1:4)
 
 pop_by_age <- extract_raster(paths, adm2)
 
-# from a folder that also holds the WorldPop age-group rasters
+# from a folder that also holds other rasters
 pop_by_age <- extract_raster(
   "data/worldpop", adm2,
   pattern = "_age\\\\d+_\\\\d{4}\\\\.tif$"
+)
+
+# MCV1 coverage weighted by population, matched by year
+mcv1 <- extract_raster(
+  "data/ihme/mcv1_coverage_mean_2000_2025.tif", adm2,
+  fun = c("mean", "weighted_mean"),
+  pop_rasters = "data/worldpop/total",
+  pop_pattern = "_pop_\\\\d{4}"
 )
 }
 }
