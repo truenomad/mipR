@@ -1,0 +1,333 @@
+################################################################################
+# mipR example: Nigeria measles campaign data, admin 1
+################################################################################
+
+## ---------------------------------------------------------------------------##
+# Setup and parameters ---------------------------------------------------------
+## ---------------------------------------------------------------------------##
+
+raw_dir <- here::here("01_data/1d_campaigns/raw")
+processed_dir <- here::here("01_data/1d_campaigns/processed")
+name_cache <- here::here("01_data/1d_campaigns/cache/nga_adm1_names.rds")
+
+nbs_url <- "https://microdata.nigerianstat.gov.ng/index.php/catalog"
+
+# the NBS survey microdata need a login, so only the reports are downloaded
+sources <- tibble::tribble(
+  ~key, ~file, ~url,
+  "pmccs", "nga_pmccs_2018_report.pdf", paste0(nbs_url, "/61/download/590"),
+  "ipccs", "nga_ipccs_2024_report.pdf", paste0(nbs_url, "/163/download/1179"),
+  "ncdc", "nga_ncdc_measles_sitrep_2024_10.pdf",
+  paste0(
+    "https://ncdc.gov.ng/themes/common/files/sitreps/",
+    "cb9bfeb95970347750a43c8eda93d22a.pdf"
+  )
+)
+
+campaign_pmccs <- "NGA-MSL-2017-2018"
+campaign_ipccs <- "NGA-MSL-2024"
+
+# row labels in the report tables that are not states
+non_state_labels <- c(
+  "NIGERIA", "TOTAL", "NORTH", "SOUTH", "NORTH CENTRAL", "NORTH EAST",
+  "NORTH WEST", "SOUTH EAST", "SOUTH SOUTH", "SOUTH WEST", "MALE", "FEMALE",
+  "URBAN", "RURAL"
+)
+
+## ---------------------------------------------------------------------------##
+# Helpers ----------------------------------------------------------------------
+## ---------------------------------------------------------------------------##
+
+download_source <- function(url, path) {
+  if (!file.exists(path)) {
+    httr2::request(url) |>
+      httr2::req_user_agent("Mozilla/5.0") |>
+      httr2::req_perform(path = path)
+  }
+
+  path
+}
+
+read_report <- function(path) {
+  pdftools::pdf_text(path) |>
+    strsplit("\n") |>
+    unlist()
+}
+
+# lines of a report table, from its title to the first line that ends it;
+# the last title match is used, since the list of tables comes first
+table_lines <- function(report_lines, title) {
+  is_title <- stringr::str_starts(
+    stringr::str_trim(report_lines), stringr::fixed(title)
+  )
+  start <- utils::tail(which(is_title), 1)
+
+  is_end <- stringr::str_detect(
+    report_lines,
+    paste0(
+      "^\\s*(Abbreviations|The results in this table|Table [0-9]|",
+      "Figure [0-9]|[0-9]+\\.[0-9]+\\.[0-9]+ )"
+    )
+  )
+  end <- which(is_end & seq_along(report_lines) > start)[1] - 1
+
+  report_lines[start:end]
+}
+
+# rows of a state table, with the numbers in `cols` order and the first
+# "(lower, upper)" pair as the confidence interval
+parse_state_rows <- function(lines, cols, exact = TRUE) {
+  rows <- stringr::str_match(
+    lines, "^\\s*([A-Za-z][A-Za-z ,.'-]*[A-Za-z])\\s{2,}([0-9(].*)$"
+  )
+  rows <- rows[!is.na(rows[, 1]), , drop = FALSE]
+
+  ci <- stringr::str_match(rows[, 3], "\\(([0-9.]+), ([0-9.]+)\\)")
+
+  values <- rows[, 3] |>
+    stringr::str_remove_all("\\([^)]*\\)|%") |>
+    stringr::str_extract_all("[0-9][0-9,]*(\\.[0-9]+)?")
+
+  keep <- if (exact) {
+    lengths(values) == length(cols)
+  } else {
+    lengths(values) >= length(cols)
+  }
+
+  value_matrix <- values[keep] |>
+    purrr::map(\(x) as.numeric(gsub(",", "", x[seq_along(cols)]))) |>
+    do.call(what = rbind)
+  colnames(value_matrix) <- cols
+
+  tibble::tibble(
+    adm1_raw = stringr::str_squish(rows[keep, 2]),
+    ci_lower = as.numeric(ci[keep, 2]),
+    ci_upper = as.numeric(ci[keep, 3])
+  ) |>
+    dplyr::bind_cols(tibble::as_tibble(value_matrix)) |>
+    dplyr::filter(!toupper(adm1_raw) %in% non_state_labels) |>
+    dplyr::distinct(adm1_raw, .keep_all = TRUE)
+}
+
+## ---------------------------------------------------------------------------##
+# Boundaries -------------------------------------------------------------------
+## ---------------------------------------------------------------------------##
+
+shp <- mipR::get_boundaries(
+  country = "NGA",
+  adm_level = 1,
+  source = "who",
+  cache_dir = here::here("01_data/1a_shapefiles")
+)
+
+## ---------------------------------------------------------------------------##
+# Source data ------------------------------------------------------------------
+## ---------------------------------------------------------------------------##
+
+dir.create(raw_dir, recursive = TRUE, showWarnings = FALSE)
+
+paths <- purrr::map2_chr(
+  sources$url, file.path(raw_dir, sources$file), download_source
+) |>
+  stats::setNames(sources$key)
+
+pmccs <- read_report(paths[["pmccs"]])
+ipccs <- read_report(paths[["ipccs"]])
+ncdc <- read_report(paths[["ncdc"]])
+
+## ---------------------------------------------------------------------------##
+# 2017-2018 post measles campaign coverage survey ------------------------------
+## ---------------------------------------------------------------------------##
+
+pmccs_prior <- table_lines(pmccs, "Table 2.4a:") |>
+  parse_state_rows(
+    c(
+      "card_pct", "recall_pct", "no_pct", "unknown_pct", "value_pct", "n",
+      "weighted_n"
+    )
+  ) |>
+  dplyr::mutate(indicator = "mcv_before_sia")
+
+pmccs_coverage <- table_lines(pmccs, "2.5a:") |>
+  parse_state_rows(
+    c("card_pct", "recall_pct", "finger_pct", "value_pct", "n", "weighted_n")
+  ) |>
+  dplyr::mutate(indicator = "sia_coverage")
+
+pmccs_first_dose <- table_lines(pmccs, "Table 2.6a:") |>
+  parse_state_rows(c("value_pct", "n", "weighted_n")) |>
+  dplyr::mutate(indicator = "sia_first_dose")
+
+pmccs_lifetime <- table_lines(pmccs, "Table 2.8b") |>
+  parse_state_rows(
+    c("mcv_0_dose", "mcv_1_dose", "mcv_2plus_dose", "n", "weighted_n")
+  ) |>
+  tidyr::pivot_longer(
+    dplyr::starts_with("mcv_"),
+    names_to = "indicator",
+    values_to = "value_pct"
+  )
+
+pmccs_survey <- dplyr::bind_rows(
+  pmccs_prior, pmccs_coverage, pmccs_first_dose, pmccs_lifetime
+) |>
+  dplyr::transmute(
+    campaign_id = campaign_pmccs,
+    survey = "PMCCS",
+    adm1_raw,
+    indicator,
+    value_pct,
+    lower_pct = ci_lower,
+    upper_pct = ci_upper,
+    n,
+    weighted_n
+  )
+
+## ---------------------------------------------------------------------------##
+# 2024 integrated post campaign coverage survey --------------------------------
+## ---------------------------------------------------------------------------##
+
+ipccs_cols <- c(
+  "value_pct", "std_err", "lower_pct", "upper_pct", "deff", "icc", "n",
+  "weighted_n"
+)
+
+ipccs_coverage <- table_lines(ipccs, "Table 4.5:") |>
+  parse_state_rows(c("card_pct", "history_pct", "finger_pct", ipccs_cols)) |>
+  dplyr::mutate(indicator = "sia_coverage")
+
+ipccs_first_dose <- table_lines(ipccs, "Table 4.6:") |>
+  parse_state_rows(ipccs_cols) |>
+  dplyr::mutate(indicator = "sia_first_dose")
+
+# the first four columns cover all ages; the rest split them by birth cohort
+ipccs_lifetime <- table_lines(ipccs, "Table 4.7:") |>
+  parse_state_rows(
+    c("mcv_0_dose", "mcv_1_dose", "mcv_2plus_dose", "n"),
+    exact = FALSE
+  ) |>
+  tidyr::pivot_longer(
+    dplyr::starts_with("mcv_"),
+    names_to = "indicator",
+    values_to = "value_pct"
+  )
+
+ipccs_survey <- dplyr::bind_rows(
+  ipccs_coverage, ipccs_first_dose, ipccs_lifetime
+) |>
+  dplyr::transmute(
+    campaign_id = campaign_ipccs,
+    survey = "IPCCS",
+    adm1_raw,
+    indicator,
+    value_pct,
+    lower_pct,
+    upper_pct,
+    n,
+    weighted_n
+  )
+
+## ---------------------------------------------------------------------------##
+# 2024 campaign dates by state -------------------------------------------------
+## ---------------------------------------------------------------------------##
+
+calendar <- table_lines(ipccs, "Table 1.1:") |>
+  stringr::str_match("^\\s*[0-9]+\\.\\s+(.+?)\\s{2,}(.+[0-9]{4})\\s*$")
+calendar <- calendar[!is.na(calendar[, 1]), , drop = FALSE]
+
+campaign_dates <- calendar[, 3] |>
+  stringr::str_match(
+    paste0(
+      "([0-9]+)[a-z]{2}\\s*([A-Za-z]{3})?\\s+to\\s+([0-9]+)[a-z]{2}\\s+",
+      "([A-Za-z]{3})\\s+([0-9]{4})"
+    )
+  )
+
+sia_calendar <- tibble::tibble(
+  campaign_id = campaign_ipccs,
+  adm1_raw = stringr::str_squish(calendar[, 2]),
+  start_date = as.Date(
+    paste(
+      campaign_dates[, 2],
+      dplyr::coalesce(campaign_dates[, 3], campaign_dates[, 5]),
+      campaign_dates[, 6]
+    ),
+    format = "%d %b %Y"
+  ),
+  end_date = as.Date(
+    paste(campaign_dates[, 4], campaign_dates[, 5], campaign_dates[, 6]),
+    format = "%d %b %Y"
+  ),
+  target_age = "9-59 months"
+)
+
+## ---------------------------------------------------------------------------##
+# 2024 measles surveillance by state -------------------------------------------
+## ---------------------------------------------------------------------------##
+
+# cumulative from January to the end of October 2024
+measles_cases <- table_lines(ncdc, "Table 1:") |>
+  parse_state_rows(
+    c(
+      "suspected", "confirmed", "lab_confirmed", "epi_linked",
+      "clinically_compatible", "confirmed_9_59m_pct", "confirmed_zero_dose_pct"
+    )
+  ) |>
+  dplyr::select(-ci_lower, -ci_upper) |>
+  dplyr::mutate(period = "2024-01/2024-10", .before = 1)
+
+## ---------------------------------------------------------------------------##
+# State names ------------------------------------------------------------------
+## ---------------------------------------------------------------------------##
+
+adm1_lookup <- shp |>
+  sf::st_drop_geometry() |>
+  dplyr::distinct(adm0, adm1, adm1_code)
+
+# match each report spelling once; decisions are kept in the cache file
+adm1_names <- dplyr::bind_rows(
+  pmccs_survey, ipccs_survey, sia_calendar, measles_cases
+) |>
+  dplyr::distinct(adm1_raw) |>
+  dplyr::mutate(adm0 = unique(adm1_lookup$adm0), adm1 = adm1_raw)
+
+dir.create(dirname(name_cache), recursive = TRUE, showWarnings = FALSE)
+
+adm1_names <- sntutils::prep_geonames(
+  adm1_names,
+  lookup_df = dplyr::distinct(adm1_lookup, adm0, adm1),
+  level0 = "adm0",
+  level1 = "adm1",
+  cache_path = name_cache,
+  preserve_case = TRUE
+) |>
+  dplyr::left_join(adm1_lookup, by = c("adm0", "adm1"))
+
+add_adm1 <- function(df) {
+  df |>
+    dplyr::left_join(adm1_names, by = "adm1_raw") |>
+    dplyr::relocate(adm0, adm1, adm1_code, .after = adm1_raw) |>
+    dplyr::select(-adm1_raw)
+}
+
+sia_survey <- dplyr::bind_rows(pmccs_survey, ipccs_survey) |>
+  add_adm1()
+
+sia_calendar <- add_adm1(sia_calendar)
+
+measles_cases <- add_adm1(measles_cases)
+
+## ---------------------------------------------------------------------------##
+# Save -------------------------------------------------------------------------
+## ---------------------------------------------------------------------------##
+
+dir.create(processed_dir, recursive = TRUE, showWarnings = FALSE)
+
+saveRDS(sia_survey, file.path(processed_dir, "nga_sia_survey_adm1.rds"))
+
+saveRDS(sia_calendar, file.path(processed_dir, "nga_sia_calendar_adm1.rds"))
+
+saveRDS(
+  measles_cases,
+  file.path(processed_dir, "nga_measles_cases_adm1_2024.rds")
+)
