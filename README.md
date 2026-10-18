@@ -83,15 +83,11 @@ explicitly.
 
 `mipR` is currently under development and is not available on CRAN.
 
-Once the GitHub repository is available, the development version can be
-installed using:
+The development version can be installed from GitHub using:
 
 ```r
-pak::pak("OWNER/mipR")
+pak::pak("truenomad/mipR")
 ```
-
-Replace `OWNER` with the GitHub organisation or username hosting the
-repository.
 
 ## Development status
 
