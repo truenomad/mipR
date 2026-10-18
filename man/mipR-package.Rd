@@ -13,5 +13,10 @@ Provides a framework for reconstructing and projecting measles population immuni
 \author{
 \strong{Maintainer}: Mohamed A. Yusuf \email{moyusuf@who.int} (\href{https://orcid.org/0000-0002-9339-4613}{ORCID})
 
+Authors:
+\itemize{
+  \item Mohamed A. Yusuf \email{moyusuf@who.int} (\href{https://orcid.org/0000-0002-9339-4613}{ORCID})
+}
+
 }
 \keyword{internal}
