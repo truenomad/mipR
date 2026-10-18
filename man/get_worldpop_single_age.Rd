@@ -33,8 +33,7 @@ from 2015 onwards.}
 \item{release}{WorldPop release for 2015 onwards: \code{"R2025A"} (default,
 constrained to built-up areas) or \code{"R2024B"} (unconstrained).}
 
-\item{out_dir}{Directory for the group and single-year rasters. Default
-\code{"."}.}
+\item{out_dir}{Directory for the single-year rasters. Default \code{"."}.}
 
 \item{quiet}{Logical. If \code{TRUE}, suppresses progress messages.}
 }
@@ -69,7 +68,9 @@ package gives population at 31 December of each year, so 1 January uses
 the previous year's WPP population and 1 July uses the mean of the
 previous and current year.
 
-Group rasters are kept in \code{out_dir} and reused by later calls. Years
+Group rasters are downloaded to a temporary folder and deleted once the
+single-year rasters are written, so only the single-year rasters are
+kept in \code{out_dir}. Years
 before 2015 use the legacy 2000-2020 dataset (1km, male and female
 only); later years use the R2025A or R2024B release. The WPP data come
 from the wpp2024 package, which is not on CRAN. Install it with

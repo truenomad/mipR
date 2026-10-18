@@ -643,7 +643,9 @@ get_worldpop <- function(
 #' the previous year's WPP population and 1 July uses the mean of the
 #' previous and current year.
 #'
-#' Group rasters are kept in `out_dir` and reused by later calls. Years
+#' Group rasters are downloaded to a temporary folder and deleted once the
+#' single-year rasters are written, so only the single-year rasters are
+#' kept in `out_dir`. Years
 #' before 2015 use the legacy 2000-2020 dataset (1km, male and female
 #' only); later years use the R2025A or R2024B release. The WPP data come
 #' from the wpp2024 package, which is not on CRAN. Install it with
@@ -660,8 +662,7 @@ get_worldpop <- function(
 #'   from 2015 onwards.
 #' @param release WorldPop release for 2015 onwards: `"R2025A"` (default,
 #'   constrained to built-up areas) or `"R2024B"` (unconstrained).
-#' @param out_dir Directory for the group and single-year rasters. Default
-#'   `"."`.
+#' @param out_dir Directory for the single-year rasters. Default `"."`.
 #' @param quiet Logical. If `TRUE`, suppresses progress messages.
 #'
 #' @return Invisible character vector of the paths to the single-year
@@ -710,6 +711,9 @@ get_worldpop_single_age <- function(
   }
 
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+  group_dir <- tempfile("worldpop_groups_")
+  dir.create(group_dir)
+  on.exit(unlink(group_dir, recursive = TRUE), add = TRUE)
   ages <- sort(unique(ages))
   sex_label <- if (sex == "both") "" else paste0(sex, "_")
   wpp_col <- c(both = "pop", m = "popM", f = "popF")[[sex]]
@@ -757,7 +761,7 @@ get_worldpop_single_age <- function(
       .split_age_groups(
         cc, yr, ages[todo], out_fnames[todo],
         .wpp_pop_at(wpp_cc, yr, ref$date, wpp_col),
-        wpp_col, sex, resolution, release, out_dir, quiet
+        wpp_col, sex, resolution, release, group_dir, quiet
       )
     }
   }
@@ -765,8 +769,8 @@ get_worldpop_single_age <- function(
   invisible(paths[file.exists(paths)])
 }
 
-# internal helper: fetch the groups covering ages for one country-year and
-# write one raster per age
+# internal helper: fetch the groups covering ages for one country-year into
+# group_dir and write one raster per age
 #' @noRd
 .split_age_groups <- function(
   cc,
@@ -778,7 +782,7 @@ get_worldpop_single_age <- function(
   sex,
   resolution,
   release,
-  out_dir,
+  group_dir,
   quiet
 ) {
   if (nrow(wpp_yr) == 0) {
@@ -818,13 +822,13 @@ get_worldpop_single_age <- function(
   sex_set <- if (sex == "both") c("m", "f") else sex
   sexes <- if (sex == "both" && yr >= 2015) "t" else sex_set
   file_set <- .age_band_file_set(
-    cc, yr, bands, sexes, resolution, release, out_dir
+    cc, yr, bands, sexes, resolution, release, group_dir
   )
   fetched <- .fetch_age_band_files(list(file_set), quiet)
   if (!fetched && identical(sexes, "t")) {
     sexes <- sex_set
     file_set <- .age_band_file_set(
-      cc, yr, bands, sexes, resolution, release, out_dir
+      cc, yr, bands, sexes, resolution, release, group_dir
     )
     fetched <- .fetch_age_band_files(list(file_set), quiet)
   }

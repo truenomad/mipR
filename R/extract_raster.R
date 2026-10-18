@@ -39,7 +39,7 @@
 #'   written by [get_worldpop_single_age()].
 #' @param quiet Logical. If `TRUE`, suppresses progress messages.
 #'
-#' @return A data frame with `file_name`, the `id_cols`, any of `year`,
+#' @return A data frame with the `id_cols`, any of `year`,
 #'   `month`, `age` and `layer` that apply, and one column per statistic in
 #'   `fun`.
 #'
@@ -112,7 +112,6 @@ extract_raster <- function(
       )
       names(stats) <- fun
       out <- cbind(
-        data.frame(file_name = basename(rasters[i])),
         ids,
         file_info[rep(i, nrow(ids)), , drop = FALSE],
         stats
@@ -133,7 +132,7 @@ extract_raster <- function(
   out <- do.call(rbind, .fill_columns(results))
   rownames(out) <- NULL
   front <- intersect(
-    c("file_name", id_cols, "year", "month", "age", "layer"),
+    c(id_cols, "year", "month", "age", "layer"),
     names(out)
   )
   out[, c(front, fun), drop = FALSE]

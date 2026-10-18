@@ -532,7 +532,7 @@ testthat::test_that(".split_age_groups splits a group by WPP shares", {
   .split_age_groups(
     "GIN", 2020, c(1, 4), out_fnames, wpp_yr, "pop",
     sex = "both", resolution = "1km", release = "R2025A",
-    out_dir = out_dir, quiet = TRUE
+    group_dir = out_dir, quiet = TRUE
   )
 
   testthat::expect_equal(terra::values(terra::rast(out_fnames[1]))[1], 10)

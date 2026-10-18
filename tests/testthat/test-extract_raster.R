@@ -85,7 +85,7 @@ testthat::test_that("extract_raster sums values over polygons", {
 
   testthat::expect_named(
     out,
-    c("file_name", "adm2", "year", "age", "sum")
+    c("adm2", "year", "age", "sum")
   )
   testthat::expect_equal(out$sum, c(4, 6))
   testthat::expect_identical(out$age, c(3L, 3L))
@@ -114,7 +114,7 @@ testthat::test_that("extract_raster uses pattern to pick files in a folder", {
     raster_dir, polys,
     id_cols = "adm2", pattern = "_age\\d+_\\d{4}\\.tif$", quiet = TRUE
   )
-  testthat::expect_identical(out$file_name, "gin_age03_2020.tif")
+  testthat::expect_identical(nrow(out), 1L)
   testthat::expect_identical(out$age, 3L)
 
   testthat::expect_error(

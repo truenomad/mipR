@@ -40,3 +40,7 @@
   used, and keeps the `age` column when only some files carry an age.
 * `get_worldpop_single_age()` names rasters for both sexes
   `{iso3}_age{NN}_{year}.tif`, without "total".
+* `extract_raster()` no longer returns a `file_name` column.
+* `get_worldpop_single_age()` downloads the WorldPop age-group rasters to a
+  temporary folder and deletes them, so `out_dir` holds only the single-year
+  rasters.

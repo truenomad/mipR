@@ -36,7 +36,7 @@ written by \code{\link[=get_worldpop_single_age]{get_worldpop_single_age()}}.}
 \item{quiet}{Logical. If \code{TRUE}, suppresses progress messages.}
 }
 \value{
-A data frame with \code{file_name}, the \code{id_cols}, any of \code{year},
+A data frame with the \code{id_cols}, any of \code{year},
 \code{month}, \code{age} and \code{layer} that apply, and one column per statistic in
 \code{fun}.
 }
