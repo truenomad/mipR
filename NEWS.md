@@ -17,8 +17,10 @@
   and reports the HTTP status or error for any that still fail.
 * Added `get_worldpop_single_age()` to make single-year age rasters by
   splitting WorldPop age groups with UN WPP 2024 single-year population.
-* WorldPop age-sex structures are now downloaded from the University of
-  Southampton mirror when the FTP mirror cannot deliver them.
+* WorldPop rasters are downloaded over HTTPS only (age-sex structures from
+  the University of Southampton mirror). Each request retries on errors and
+  dropped connections, and files still missing are tried again after 10 and
+  30 seconds, except files the server does not have.
 * Added `extract_raster()` to summarise rasters over boundary polygons,
   reading the year, month and single year of age from each filename.
 * `get_worldpop_single_age()` now takes WPP age shares at the WorldPop

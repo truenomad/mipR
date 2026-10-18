@@ -77,8 +77,10 @@
   return(list(url = url, filename = local_fn))
 }
 
-# internal helper: download urls to dests concurrently, trying the ftp
-# mirror first and falling back to https. returns TRUE per file present
+# internal helper: download urls to dests concurrently over https. each
+# request retries on errors and dropped connections, and files still missing
+# after a pass (other than 404s) are tried again after a pause. returns TRUE
+# per file present
 #' @noRd
 .worldpop_fetch <- function(urls, dests, quiet = FALSE, max_active = 6) {
   missing_idx <- which(!file.exists(dests))
@@ -87,72 +89,47 @@
   }
 
   part_paths <- paste0(dests[missing_idx], ".part")
-
-  ftp_urls <- sub(
-    paste0(
-      "^https://(data\\.worldpop\\.org|",
-      "worldpop-public-data\\.soton\\.ac\\.uk)/"
-    ),
-    "ftp://ftp.worldpop.org.uk/",
-    urls[missing_idx]
-  )
-
-  # the mirror caps connections per IP, so fetch at most 4 at a time, back
-  # off between retries, and resume partial files
   fetched <- rep(FALSE, length(missing_idx))
-  not_on_server <- rep(FALSE, length(missing_idx))
-  backoffs <- c(0, 10, 30)
-  for (attempt in 1:3) {
-    todo <- which(!fetched & !not_on_server)
-    if (length(todo) == 0) break
-    if (backoffs[attempt] > 0) {
-      if (!quiet) {
-        cli::cli_alert_info(paste0(
-          "Retrying {length(todo)} file{?s} on the FTP mirror ",
-          "in {backoffs[attempt]}s"
-        ))
-      }
-      Sys.sleep(backoffs[attempt])
-    }
-    for (chunk in split(todo, ceiling(seq_along(todo) / 4))) {
-      ftp_results <- suppressWarnings(curl::multi_download(
-        ftp_urls[chunk], part_paths[chunk],
-        resume = TRUE, progress = !quiet, timeout = 600
-      ))
-      fetched[chunk] <- ftp_results$success %in% TRUE &
-        file.exists(part_paths[chunk])
-      # 550 = not on the server; do not retry
-      not_on_server[chunk] <- !fetched[chunk] &
-        grepl("550", ftp_results$error)
-    }
-  }
+  not_found <- rep(FALSE, length(missing_idx))
+  pauses <- c(0, 10, 30)
 
-  # fall back to https for anything the ftp mirror could not deliver
-  retry_idx <- which(!fetched)
-  if (length(retry_idx) > 0) {
-    transient_idx <- retry_idx[!not_on_server[retry_idx]]
-    if (length(transient_idx) > 0) {
-      cli::cli_alert_warning(paste0(
-        "{length(transient_idx)} file{?s} unavailable from the FTP ",
-        "mirror; falling back to throttled HTTPS (slow for large files)"
-      ))
+  for (pass in seq_along(pauses)) {
+    todo <- which(!fetched & !not_found)
+    if (length(todo) == 0) {
+      break
     }
-    unlink(part_paths[retry_idx])
-    requests <- lapply(urls[missing_idx][retry_idx], function(url) {
+    if (pauses[pass] > 0) {
+      if (!quiet) {
+        cli::cli_alert_info(
+          "Retrying {length(todo)} file{?s} in {pauses[pass]}s"
+        )
+      }
+      Sys.sleep(pauses[pass])
+    }
+
+    requests <- lapply(urls[missing_idx][todo], function(url) {
       httr2::request(url) |>
         httr2::req_options(low_speed_limit = 1024, low_speed_time = 120) |>
-        httr2::req_retry(max_tries = 3, backoff = ~5)
+        httr2::req_retry(
+          max_tries = 3, backoff = ~5, retry_on_failure = TRUE
+        )
     })
     responses <- httr2::req_perform_parallel(
       requests,
-      paths = part_paths[retry_idx],
+      paths = part_paths[todo],
       max_active = max_active,
       on_error = "continue",
       progress = !quiet
     )
-    fetched[retry_idx] <- vapply(
+    fetched[todo] <- vapply(
       responses,
       function(response) inherits(response, "httr2_response"),
+      logical(1)
+    )
+    # a file the server does not have is not retried
+    not_found[todo] <- vapply(
+      responses,
+      function(response) inherits(response, "httr2_http_404"),
       logical(1)
     )
   }
