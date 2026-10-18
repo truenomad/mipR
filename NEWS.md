@@ -26,8 +26,9 @@
 * `get_worldpop_single_age()` now takes WPP age shares at the WorldPop
   reference date: 1 January for R2025A and R2024B, and an assumed 1 July for
   the legacy 2000-2020 data.
-* `get_boundaries()` returns `adm0`, the name and code of each level,
-  `start_date`, `end_date` and `source`. The `adm1_code`, `adm2_code`, ...
+* `get_boundaries()` returns `adm0`, the name and code of each level, and
+  `source`, plus `start_date` and `end_date` for WHO boundaries requested
+  with `latest = FALSE`. The `adm1_code`, `adm2_code`, ...
   columns are now hashes of the unit's name and its parents' names, so they
   are the same across sources that spell the names the same way.
 * `get_boundaries()` keeps each download as a single file in `cache_dir`,

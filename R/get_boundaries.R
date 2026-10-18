@@ -23,8 +23,8 @@
 #' - `"gadm"`: GADM version 4.1. GADM data are free for academic and other
 #'   non-commercial use, and may not be redistributed without permission.
 #' - `"who"`: WHO administrative boundaries from ArcGIS services (levels 0 to
-#'   2). These carry `start_date` and `end_date` columns, and `latest = FALSE`
-#'   returns historical boundaries as well as current ones.
+#'   2). `latest = FALSE` returns historical boundaries as well as current
+#'   ones, with `start_date` and `end_date` columns.
 #'
 #' When `cache = TRUE`, downloaded files are kept in `cache_dir` and reused.
 #' Each download is a single file in `cache_dir`, with no subfolders, and
@@ -61,7 +61,8 @@
 #'       source that spells its names the same way. `NA` when the unit name
 #'       is missing}
 #'     \item{start_date, end_date}{Dates when the boundary came into and
-#'       went out of use (WHO only; `NA` for other sources)}
+#'       went out of use. Only returned for `source = "who"` with
+#'       `latest = FALSE`}
 #'     \item{source}{The provider the boundaries came from}
 #'     \item{geometry}{Boundary polygons}
 #'   }
@@ -108,7 +109,7 @@ get_boundaries <- function(
       latest = latest,
       dest_path = dest_path
     )
-    return(.standardise_boundaries(out, level, source))
+    return(.standardise_boundaries(out, level, source, dates = !latest))
   }
 
   download_dir <- if (isTRUE(cache)) {
@@ -273,17 +274,24 @@ list_boundaries <- function(
   file.path("/vsizip", zip_abs, shp, fsep = "/")
 }
 
+# internal helper: standard columns, name-based codes and EPSG:4326. dates
+# keeps start_date and end_date, which only historical WHO boundaries need
 #' @noRd
-.standardise_boundaries <- function(x, level, source) {
+.standardise_boundaries <- function(x, level, source, dates = FALSE) {
   core <- "adm0"
   for (l in seq_len(level)) {
     core <- c(core, paste0("adm", l), paste0("adm", l, "_code"))
   }
-  for (col in setdiff(c(core, "start_date", "end_date"), names(x))) {
+  if (dates) {
+    core <- c(core, "start_date", "end_date")
+  }
+  for (col in setdiff(core, names(x))) {
     x[[col]] <- NA
   }
-  x$start_date <- as.Date(x$start_date)
-  x$end_date <- as.Date(x$end_date)
+  if (dates) {
+    x$start_date <- as.Date(x$start_date)
+    x$end_date <- as.Date(x$end_date)
+  }
   x$source <- source
 
   # codes come from the names of the unit and its parents, not the provider
@@ -298,7 +306,7 @@ list_boundaries <- function(
     )
   }
 
-  x <- x[, c(core, "start_date", "end_date", "source")]
+  x <- x[, c(core, "source")]
   if (attr(x, "sf_column") != "geometry") {
     sf::st_geometry(x) <- "geometry"
   }

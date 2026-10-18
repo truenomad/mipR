@@ -48,7 +48,8 @@ joined with \code{|}, so the same unit gets the same code from every
 source that spells its names the same way. \code{NA} when the unit name
 is missing}
 \item{start_date, end_date}{Dates when the boundary came into and
-went out of use (WHO only; \code{NA} for other sources)}
+went out of use. Only returned for \code{source = "who"} with
+\code{latest = FALSE}}
 \item{source}{The provider the boundaries came from}
 \item{geometry}{Boundary polygons}
 }
@@ -77,8 +78,8 @@ level is published in each file, so the names of parent units are \code{NA}.
 \item \code{"gadm"}: GADM version 4.1. GADM data are free for academic and other
 non-commercial use, and may not be redistributed without permission.
 \item \code{"who"}: WHO administrative boundaries from ArcGIS services (levels 0 to
-2). These carry \code{start_date} and \code{end_date} columns, and \code{latest = FALSE}
-returns historical boundaries as well as current ones.
+2). \code{latest = FALSE} returns historical boundaries as well as current
+ones, with \code{start_date} and \code{end_date} columns.
 }
 
 When \code{cache = TRUE}, downloaded files are kept in \code{cache_dir} and reused.

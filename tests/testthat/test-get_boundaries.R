@@ -64,12 +64,19 @@ testthat::test_that(".standardise_boundaries returns the standard columns", {
     names(out),
     c(
       "adm0", "adm1", "adm1_code", "adm2", "adm2_code",
-      "start_date", "end_date", "source", "geometry"
+      "source", "geometry"
     )
   )
   testthat::expect_true(is.na(out$adm1))
   testthat::expect_true(is.na(out$adm1_code))
-  testthat::expect_s3_class(out$start_date, "Date")
+
+  # historical WHO boundaries keep their dates
+  dated <- .standardise_boundaries(x, level = 0, source = "who", dates = TRUE)
+  testthat::expect_identical(
+    names(dated),
+    c("adm0", "start_date", "end_date", "source", "geometry")
+  )
+  testthat::expect_s3_class(dated$start_date, "Date")
 })
 
 testthat::test_that(".standardise_boundaries hashes the names of each level", {
