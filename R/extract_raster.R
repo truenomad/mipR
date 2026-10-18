@@ -56,7 +56,9 @@
 #'   directory whose files matching `pop_pattern` are used, for the weighted
 #'   statistics. Default `NULL`.
 #' @param pop_pattern Regular expression for the files to use when
-#'   `pop_rasters` is a directory. Default `"\\.tiff?$"`.
+#'   `pop_rasters` is a directory. Default `"_age00_\\d{4}\\.tif$"`, the
+#'   under-one population written by [get_worldpop_single_age()], one
+#'   raster per year.
 #' @param quiet Logical. If `TRUE`, suppresses progress messages.
 #'
 #' @return A data frame with the `id_cols`, any of `year`, `month`, `age`
@@ -80,8 +82,7 @@
 #' mcv1 <- extract_raster(
 #'   "data/ihme/mcv1_coverage_mean_2000_2025.tif", adm2,
 #'   fun = c("mean", "weighted_mean"),
-#'   pop_rasters = "data/worldpop/total",
-#'   pop_pattern = "_pop_\\d{4}"
+#'   pop_rasters = "data/worldpop"
 #' )
 #' }
 #' @export
@@ -92,7 +93,7 @@ extract_raster <- function(
   fun = "sum",
   pattern = "\\.tiff?$",
   pop_rasters = NULL,
-  pop_pattern = "\\.tiff?$",
+  pop_pattern = "_age00_\\d{4}\\.tif$",
   quiet = FALSE
 ) {
   weighted_funs <- c("weighted_mean", "weighted_median")

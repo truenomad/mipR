@@ -192,7 +192,8 @@ testthat::test_that("extract_raster weights values by population by year", {
     fx$values, fx$polys,
     id_cols = "adm2", pattern = "^mcv1_",
     fun = c("mean", "weighted_mean", "weighted_median"),
-    pop_rasters = fx$pop, quiet = TRUE
+    pop_rasters = fx$pop, pop_pattern = "_pop_",
+      quiet = TRUE
   )
 
   testthat::expect_named(
@@ -219,7 +220,8 @@ testthat::test_that("extract_raster uses the nearest population year", {
     out <- extract_raster(
       fx$values, fx$polys,
       id_cols = "adm2", pattern = "^mcv1_",
-      fun = "weighted_mean", pop_rasters = fx$pop, quiet = TRUE
+      fun = "weighted_mean", pop_rasters = fx$pop, pop_pattern = "_pop_",
+      quiet = TRUE
     ),
     "nearest year"
   )
@@ -247,7 +249,8 @@ testthat::test_that("extract_raster checks weighted inputs", {
     extract_raster(
       fx$values, fx$polys,
       id_cols = "adm2", pattern = "^mcv1_",
-      fun = "weighted_mean", pop_rasters = fx$pop, quiet = TRUE
+      fun = "weighted_mean", pop_rasters = fx$pop, pop_pattern = "_pop_",
+      quiet = TRUE
     ),
     "share year"
   )

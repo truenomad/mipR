@@ -11,7 +11,7 @@ extract_raster(
   fun = "sum",
   pattern = "\\\\.tiff?$",
   pop_rasters = NULL,
-  pop_pattern = "\\\\.tiff?$",
+  pop_pattern = "_age00_\\\\d{4}\\\\.tif$",
   quiet = FALSE
 )
 }
@@ -41,7 +41,9 @@ directory whose files matching \code{pop_pattern} are used, for the weighted
 statistics. Default \code{NULL}.}
 
 \item{pop_pattern}{Regular expression for the files to use when
-\code{pop_rasters} is a directory. Default \code{"\\\\.tiff?$"}.}
+\code{pop_rasters} is a directory. Default \code{"_age00_\\\\d{4}\\\\.tif$"}, the
+under-one population written by \code{\link[=get_worldpop_single_age]{get_worldpop_single_age()}}, one
+raster per year.}
 
 \item{quiet}{Logical. If \code{TRUE}, suppresses progress messages.}
 }
@@ -107,8 +109,7 @@ pop_by_age <- extract_raster(
 mcv1 <- extract_raster(
   "data/ihme/mcv1_coverage_mean_2000_2025.tif", adm2,
   fun = c("mean", "weighted_mean"),
-  pop_rasters = "data/worldpop/total",
-  pop_pattern = "_pop_\\\\d{4}"
+  pop_rasters = "data/worldpop"
 )
 }
 }

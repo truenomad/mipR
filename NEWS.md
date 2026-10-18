@@ -61,4 +61,5 @@
   `"weighted_median"`, which weight each value cell by the population it
   holds, with population rasters matched to value rasters by year (or the
   nearest year). The output then includes `pop_sum`, the population in each
-  polygon.
+  polygon. In a folder, `pop_pattern` picks the under-one rasters from
+  `get_worldpop_single_age()` by default.
