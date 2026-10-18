@@ -23,6 +23,7 @@ Imports:
     exactextractr,
     httr2 (>= 1.0.0),
     openssl,
+    readxl,
     sf,
     stats,
     terra,

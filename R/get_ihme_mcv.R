@@ -338,3 +338,125 @@ get_ihme_mcv <- function(dest_dir = ".", quiet = FALSE) {
 
   invisible(paths)
 }
+
+# admin-level tables -----------------------------------------------------------
+
+#' Read IHME MCV Coverage Estimates by Administrative Unit
+#'
+#' Reads the IHME admin 1 or admin 2 coverage table for MCV1 or MCV2, as
+#' downloaded by [get_ihme_mcv()], into a tidy data frame. IHME publishes
+#' MCV2 only as these tables, not as rasters.
+#'
+#' @details
+#' The unit names are IHME's own and may be spelled differently from the
+#' boundaries in use. Match them before joining, for example with
+#' `sntutils::prep_geonames()` against the output of [get_boundaries()].
+#' Once the names match, the `adm1_code` and `adm2_code` columns of the
+#' boundaries can be joined on, since they are made from the names.
+#'
+#' Coverage is a proportion between 0 and 1. `pop_under_1` is IHME's
+#' population under 1 year in the unit and year.
+#'
+#' @param path Directory used by [get_ihme_mcv()], or the path to the Excel
+#'   table itself. In a directory, the newest release of the table for
+#'   `dose` is used.
+#' @param dose `"mcv1"` or `"mcv2"` (default).
+#' @param adm_level Administrative level of the table: `1` (default) or
+#'   `2`.
+#' @param country Optional ISO3 codes to keep. Case is ignored. Default
+#'   `NULL`, every country in the table.
+#'
+#' @return A data frame with `iso3`, `adm0`, `adm1`, `adm2` (admin 2
+#'   only), `year`, `dose`, `coverage_mean`, `coverage_lower`,
+#'   `coverage_upper` and `pop_under_1`.
+#'
+#' @examples
+#' \dontrun{
+#' get_ihme_mcv(dest_dir = "data/ihme")
+#' mcv2 <- read_ihme_mcv_admin("data/ihme", dose = "mcv2", country = "NGA")
+#' }
+#' @export
+read_ihme_mcv_admin <- function(
+  path,
+  dose = c("mcv2", "mcv1"),
+  adm_level = 1,
+  country = NULL
+) {
+  dose <- match.arg(dose)
+  if (!adm_level %in% c(1, 2)) {
+    cli::cli_abort("{.arg adm_level} must be 1 or 2.")
+  }
+
+  file <- .ihme_admin_table(path, dose)
+  sheet <- paste0(toupper(dose), " - Admin ", adm_level)
+  if (!sheet %in% readxl::excel_sheets(file)) {
+    cli::cli_abort("Sheet {.val {sheet}} not found in {.file {file}}.")
+  }
+  x <- as.data.frame(readxl::read_excel(file, sheet = sheet))
+
+  label <- toupper(dose)
+  needed <- c(
+    "ISO3", "Year", "Country", "Admin1",
+    paste(label, c("Mean", "Lower", "Upper"), sep = " - "),
+    "Population under 1 year",
+    if (adm_level == 2) "Admin2"
+  )
+  missing_cols <- setdiff(needed, names(x))
+  if (length(missing_cols) > 0) {
+    cli::cli_abort(c(
+      "The IHME table does not have the expected columns.",
+      "x" = "Missing: {.val {missing_cols}}"
+    ))
+  }
+
+  if (!is.null(country)) {
+    x <- x[toupper(x$ISO3) %in% toupper(country), ]
+    if (nrow(x) == 0) {
+      cli::cli_abort(
+        "No rows for {.val {toupper(country)}} in the IHME table."
+      )
+    }
+  }
+
+  out <- data.frame(
+    iso3 = x$ISO3,
+    adm0 = x$Country,
+    adm1 = x$Admin1
+  )
+  if (adm_level == 2) {
+    out$adm2 <- x$Admin2
+  }
+  out$year <- as.integer(x$Year)
+  out$dose <- dose
+  out$coverage_mean <- x[[paste(label, "- Mean")]]
+  out$coverage_lower <- x[[paste(label, "- Lower")]]
+  out$coverage_upper <- x[[paste(label, "- Upper")]]
+  out$pop_under_1 <- x[["Population under 1 year"]]
+
+  keys <- intersect(c("iso3", "adm1", "adm2", "year"), names(out))
+  out <- out[do.call(order, unname(as.list(out[keys]))), ]
+  rownames(out) <- NULL
+  out
+}
+
+# internal helper: the admin table for a dose, from a file path or the
+# newest release in a directory
+#' @noRd
+.ihme_admin_table <- function(path, dose) {
+  if (length(path) == 1 && file.exists(path) && !dir.exists(path)) {
+    return(path)
+  }
+  if (!dir.exists(path)) {
+    cli::cli_abort("{.path {path}} is not a file or directory.")
+  }
+  pattern <- paste0("^", dose, "_coverage_adm1_adm2_2000_(\\d{4})\\.xlsx$")
+  files <- list.files(path, pattern = pattern, ignore.case = TRUE)
+  if (length(files) == 0) {
+    cli::cli_abort(c(
+      "No {toupper(dose)} admin table in {.path {path}}.",
+      "i" = "Download it with {.fn get_ihme_mcv}."
+    ))
+  }
+  years <- as.integer(sub(pattern, "\\1", files, ignore.case = TRUE))
+  file.path(path, files[which.max(years)])
+}

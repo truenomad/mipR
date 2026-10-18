@@ -66,3 +66,5 @@
 * `extract_raster()` gives each layer of a stack without year names the
   years of the range in its filename, such as 2000 to 2025 for the 26 layers
   of the IHME MCV1 rasters.
+* Added `read_ihme_mcv_admin()` to read the IHME MCV1 and MCV2 coverage
+  tables by admin 1 or admin 2 unit into a tidy data frame.

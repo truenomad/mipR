@@ -78,6 +78,35 @@ mcv1 <- mipR::extract_raster(
 )
 
 ## ---------------------------------------------------------------------------##
+# MCV2 coverage by admin unit --------------------------------------------------
+## ---------------------------------------------------------------------------##
+
+# IHME publishes MCV2 only as admin tables, with its own unit names
+mcv2 <- mipR::read_ihme_mcv_admin(
+  here::here("01_data/1c_ihme/raw"),
+  dose = "mcv2",
+  adm_level = 1,
+  country = "NGA"
+)
+
+# match IHME unit names to the boundaries; decisions are cached so each
+# name is confirmed once
+mcv2 <- sntutils::prep_geonames(
+  target_df = mcv2,
+  lookup_df = sf::st_drop_geometry(shp),
+  level0 = "adm0",
+  level1 = "adm1",
+  cache_path = here::here("01_data/1c_ihme/processed/geoname_cache.rds")
+)
+
+# add the boundary codes, which come from the matched names
+mcv2 <- dplyr::left_join(
+  mcv2,
+  sf::st_drop_geometry(shp)[, c("adm0", "adm1", "adm1_code")],
+  by = c("adm0", "adm1")
+)
+
+## ---------------------------------------------------------------------------##
 # Monthly birth cohorts --------------------------------------------------------
 ## ---------------------------------------------------------------------------##
 
