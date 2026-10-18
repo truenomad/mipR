@@ -9,12 +9,13 @@ extract_raster(
   shapefile,
   id_cols = c("adm0", "adm1", "adm2"),
   fun = "sum",
+  pattern = "\\\\.tiff?$",
   quiet = FALSE
 )
 }
 \arguments{
 \item{rasters}{Character vector of raster file paths, or a single
-directory whose \code{.tif} and \code{.tiff} files are all used.}
+directory whose files matching \code{pattern} are used.}
 
 \item{shapefile}{An \code{sf} object of boundary polygons, for example from
 \code{\link[=get_boundaries]{get_boundaries()}}.}
@@ -25,6 +26,12 @@ directory whose \code{.tif} and \code{.tiff} files are all used.}
 \item{fun}{Summary statistic or statistics passed to
 \code{\link[exactextractr:exact_extract]{exactextractr::exact_extract()}}: \code{"sum"} (default, for counts such as
 population), \code{"mean"}, \code{"median"}, \code{"min"} or \code{"max"}.}
+
+\item{pattern}{Regular expression for the files to use when \code{rasters} is
+a directory, matched against the filenames (case is ignored). Default
+\code{"\\\\.tiff?$"}, every \code{.tif} and \code{.tiff} file. For example,
+\code{"_age\\\\d+_\\\\d{4}\\\\.tif$"} keeps only the single-year rasters
+written by \code{\link[=get_worldpop_single_age]{get_worldpop_single_age()}}.}
 
 \item{quiet}{Logical. If \code{TRUE}, suppresses progress messages.}
 }
@@ -42,7 +49,7 @@ year of age are read from each filename.
 Filenames are read as follows:
 \itemize{
 \item \strong{Age:} a token such as \code{age02} gives \code{age = 2}, as written by
-\code{\link[=get_worldpop_single_age]{get_worldpop_single_age()}}.
+\code{\link[=get_worldpop_single_age]{get_worldpop_single_age()}}. Files without one get \code{NA}.
 \item \strong{Date:} dates are recognised as \code{YYYY-MM-DD} (daily), \code{YYYY-MM},
 \code{YYYYMM} or \code{MM-YYYY} (monthly), or \code{YYYY} (yearly), with \code{-}, \verb{_} or
 \code{.} as separators. All files must use the same date format. When a
@@ -65,5 +72,11 @@ adm2 <- get_boundaries("NGA", adm_level = 2)
 paths <- get_worldpop_single_age("NGA", 2025, ages = 1:4)
 
 pop_by_age <- extract_raster(paths, adm2)
+
+# from a folder that also holds the WorldPop age-group rasters
+pop_by_age <- extract_raster(
+  "data/worldpop", adm2,
+  pattern = "_age\\\\d+_\\\\d{4}\\\\.tif$"
+)
 }
 }

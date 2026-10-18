@@ -7,7 +7,7 @@
 #' @details
 #' Filenames are read as follows:
 #' - **Age:** a token such as `age02` gives `age = 2`, as written by
-#'   [get_worldpop_single_age()].
+#'   [get_worldpop_single_age()]. Files without one get `NA`.
 #' - **Date:** dates are recognised as `YYYY-MM-DD` (daily), `YYYY-MM`,
 #'   `YYYYMM` or `MM-YYYY` (monthly), or `YYYY` (yearly), with `-`, `_` or
 #'   `.` as separators. All files must use the same date format. When a
@@ -24,7 +24,7 @@
 #' The boundaries are transformed to the raster's CRS when they differ.
 #'
 #' @param rasters Character vector of raster file paths, or a single
-#'   directory whose `.tif` and `.tiff` files are all used.
+#'   directory whose files matching `pattern` are used.
 #' @param shapefile An `sf` object of boundary polygons, for example from
 #'   [get_boundaries()].
 #' @param id_cols Columns of `shapefile` to keep in the output. Default
@@ -32,6 +32,11 @@
 #' @param fun Summary statistic or statistics passed to
 #'   [exactextractr::exact_extract()]: `"sum"` (default, for counts such as
 #'   population), `"mean"`, `"median"`, `"min"` or `"max"`.
+#' @param pattern Regular expression for the files to use when `rasters` is
+#'   a directory, matched against the filenames (case is ignored). Default
+#'   `"\\.tiff?$"`, every `.tif` and `.tiff` file. For example,
+#'   `"_age\\d+_\\d{4}\\.tif$"` keeps only the single-year rasters
+#'   written by [get_worldpop_single_age()].
 #' @param quiet Logical. If `TRUE`, suppresses progress messages.
 #'
 #' @return A data frame with `file_name`, the `id_cols`, any of `year`,
@@ -44,6 +49,12 @@
 #' paths <- get_worldpop_single_age("NGA", 2025, ages = 1:4)
 #'
 #' pop_by_age <- extract_raster(paths, adm2)
+#'
+#' # from a folder that also holds the WorldPop age-group rasters
+#' pop_by_age <- extract_raster(
+#'   "data/worldpop", adm2,
+#'   pattern = "_age\\d+_\\d{4}\\.tif$"
+#' )
 #' }
 #' @export
 extract_raster <- function(
@@ -51,6 +62,7 @@ extract_raster <- function(
   shapefile,
   id_cols = c("adm0", "adm1", "adm2"),
   fun = "sum",
+  pattern = "\\.tiff?$",
   quiet = FALSE
 ) {
   fun <- match.arg(
@@ -69,11 +81,11 @@ extract_raster <- function(
   if (length(rasters) == 1 && dir.exists(rasters)) {
     rasters <- list.files(
       rasters,
-      pattern = "\\.tiff?$", full.names = TRUE, ignore.case = TRUE
+      pattern = pattern, full.names = TRUE, ignore.case = TRUE
     )
   }
   if (length(rasters) == 0) {
-    cli::cli_abort("No raster files found.")
+    cli::cli_abort("No raster files found matching {.val {pattern}}.")
   }
   missing_files <- rasters[!file.exists(rasters)]
   if (length(missing_files) > 0) {
@@ -135,8 +147,11 @@ extract_raster <- function(
   info <- data.frame(row.names = seq_along(files))
 
   # drop age tokens and worldpop group codes so they are not read as dates
-  age <- regmatches(names, regexpr("(?<=age)\\d+", names, perl = TRUE))
   has_age <- grepl("age\\d+", names, perl = TRUE)
+  age <- rep(NA_integer_, length(names))
+  age[has_age] <- as.integer(
+    regmatches(names, regexpr("(?<=age)\\d+", names, perl = TRUE))
+  )
   names <- gsub("age\\d+", "", names, perl = TRUE)
   names <- gsub("_[mft]_\\d{1,2}_", "_", names, perl = TRUE)
 
@@ -154,8 +169,8 @@ extract_raster <- function(
       info$month <- vapply(dates, function(d) d[["month"]], integer(1))
     }
   }
-  if (all(has_age)) {
-    info$age <- as.integer(age)
+  if (any(has_age)) {
+    info$age <- age
   }
   info
 }

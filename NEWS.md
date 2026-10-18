@@ -36,3 +36,7 @@
   `make_anchors()` to prepare the anchors and `cohort_eligibility()` to work
   out the share of a monthly cohort eligible on a vaccination date or during
   a campaign (#8).
+* `extract_raster()` gains `pattern` to choose which files in a folder are
+  used, and keeps the `age` column when only some files carry an age.
+* `get_worldpop_single_age()` names rasters for both sexes
+  `{iso3}_age{NN}_{year}.tif`, without "total".

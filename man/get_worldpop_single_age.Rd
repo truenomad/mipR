@@ -40,8 +40,8 @@ constrained to built-up areas) or \code{"R2024B"} (unconstrained).}
 }
 \value{
 Invisible character vector of the paths to the single-year
-rasters, named \verb{\{iso3\}_\{sex\}_age\{NN\}_\{year\}.tif}, where sex is
-\code{"total"}, \code{"m"} or \code{"f"}.
+rasters, named \verb{\{iso3\}_age\{NN\}_\{year\}.tif} for both sexes and
+\verb{\{iso3\}_\{sex\}_age\{NN\}_\{year\}.tif} for \code{"m"} or \code{"f"}.
 }
 \description{
 Downloads the WorldPop age-group rasters that cover the requested ages and

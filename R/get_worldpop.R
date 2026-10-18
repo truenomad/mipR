@@ -665,8 +665,8 @@ get_worldpop <- function(
 #' @param quiet Logical. If `TRUE`, suppresses progress messages.
 #'
 #' @return Invisible character vector of the paths to the single-year
-#'   rasters, named `{iso3}_{sex}_age{NN}_{year}.tif`, where sex is
-#'   `"total"`, `"m"` or `"f"`.
+#'   rasters, named `{iso3}_age{NN}_{year}.tif` for both sexes and
+#'   `{iso3}_{sex}_age{NN}_{year}.tif` for `"m"` or `"f"`.
 #'
 #' @examples
 #' \dontrun{
@@ -711,7 +711,7 @@ get_worldpop_single_age <- function(
 
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
   ages <- sort(unique(ages))
-  sex_label <- if (sex == "both") "total" else sex
+  sex_label <- if (sex == "both") "" else paste0(sex, "_")
   wpp_col <- c(both = "pop", m = "popM", f = "popF")[[sex]]
 
   pop_cols <- c("country_code", "name", "year", "age", wpp_col)
@@ -742,7 +742,7 @@ get_worldpop_single_age <- function(
     for (yr in unique(years)) {
       out_fnames <- file.path(
         out_dir,
-        sprintf("%s_%s_age%02d_%d.tif", tolower(cc), sex_label, ages, yr)
+        sprintf("%s_%sage%02d_%d.tif", tolower(cc), sex_label, ages, yr)
       )
       paths <- c(paths, out_fnames)
       todo <- !file.exists(out_fnames)

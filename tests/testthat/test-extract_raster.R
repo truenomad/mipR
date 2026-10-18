@@ -1,12 +1,21 @@
 testthat::test_that(".raster_file_info reads ages and years", {
   info <- .raster_file_info(c(
-    "nga_total_age01_2025.tif", "nga_total_age02_2025.tif",
-    "nga_total_age02_2026.tif"
+    "nga_age01_2025.tif", "nga_age02_2025.tif",
+    "nga_age02_2026.tif"
   ))
 
   testthat::expect_identical(info$year, c(2025L, 2025L, 2026L))
   testthat::expect_identical(info$age, c(1L, 2L, 2L))
   testthat::expect_null(info$month)
+})
+
+testthat::test_that(".raster_file_info keeps age when some files lack it", {
+  info <- .raster_file_info(c(
+    "nga_t_01_2025_CN_1km_UA_v1.tif", "nga_age02_2025.tif"
+  ))
+
+  testthat::expect_identical(info$year, c(2025L, 2025L))
+  testthat::expect_identical(info$age, c(NA, 2L))
 })
 
 testthat::test_that(".raster_file_info ignores WorldPop group codes", {
@@ -59,7 +68,7 @@ testthat::test_that("extract_raster sums values over polygons", {
   dir.create(raster_dir)
   on.exit(unlink(raster_dir, recursive = TRUE), add = TRUE)
   suppressWarnings(terra::writeRaster(
-    r, file.path(raster_dir, "gin_total_age03_2020.tif")
+    r, file.path(raster_dir, "gin_age03_2020.tif")
   ))
 
   # left and right halves of the grid
@@ -80,4 +89,36 @@ testthat::test_that("extract_raster sums values over polygons", {
   )
   testthat::expect_equal(out$sum, c(4, 6))
   testthat::expect_identical(out$age, c(3L, 3L))
+})
+
+testthat::test_that("extract_raster uses pattern to pick files in a folder", {
+  r <- terra::rast(
+    nrows = 2, ncols = 2, xmin = 0, xmax = 2, ymin = 0, ymax = 2,
+    crs = "EPSG:4326", vals = c(1, 2, 3, 4)
+  )
+  raster_dir <- tempfile("extract_")
+  dir.create(raster_dir)
+  on.exit(unlink(raster_dir, recursive = TRUE), add = TRUE)
+  for (f in c("gin_age03_2020.tif", "gin_t_01_2020_CN_1km_UA_v1.tif")) {
+    suppressWarnings(terra::writeRaster(r, file.path(raster_dir, f)))
+  }
+  polys <- sf::st_sf(
+    adm2 = "all",
+    geometry = sf::st_sfc(
+      sf::st_polygon(list(rbind(c(0, 0), c(2, 0), c(2, 2), c(0, 2), c(0, 0)))),
+      crs = 4326
+    )
+  )
+
+  out <- extract_raster(
+    raster_dir, polys,
+    id_cols = "adm2", pattern = "_age\\d+_\\d{4}\\.tif$", quiet = TRUE
+  )
+  testthat::expect_identical(out$file_name, "gin_age03_2020.tif")
+  testthat::expect_identical(out$age, 3L)
+
+  testthat::expect_error(
+    extract_raster(raster_dir, polys, id_cols = "adm2", pattern = "^none"),
+    "No raster files found"
+  )
 })
