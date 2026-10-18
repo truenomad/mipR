@@ -1,0 +1,24 @@
+Package: mipR
+Title: Spatiotemporal Measles Population Immunity Profiling
+Version: 0.0.1
+Authors@R: 
+    person("Mohamed A.", "Yusuf", , "moyusuf@who.int", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-9339-4613"))
+Description: Provides a framework for reconstructing and projecting
+    measles population immunity across birth cohorts, age groups,
+    geographical units, and calendar months. The package is designed to
+    integrate routine immunisation coverage, supplementary immunisation
+    activities, and vaccine effectiveness assumptions to support
+    spatiotemporal immunity profiling. Planned capabilities include
+    subnational immunity estimation, uncertainty analysis, and evaluation
+    of alternative vaccination scenarios.
+License: MIT + file LICENSE
+Suggests: 
+    knitr,
+    rmarkdown,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Encoding: UTF-8
+Language: en-GB
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
