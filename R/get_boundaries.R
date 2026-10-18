@@ -398,16 +398,16 @@ list_boundaries <- function(
   geom_col <- attr(x, "sf_column")
   names(x)[names(x) != geom_col] <- tolower(names(x)[names(x) != geom_col])
 
-  pick <- function(candidates) {
+  .pick <- function(candidates) {
     col <- intersect(candidates, names(x))
     if (length(col) == 0) NA_character_ else as.character(x[[col[[1]]]])
   }
 
   x$adm0_code <- iso3
-  x$adm0 <- pick(c("adm0_name", "adm0_en"))
+  x$adm0 <- .pick(c("adm0_name", "adm0_en"))
   for (l in seq_len(level)) {
-    x[[paste0("adm", l)]] <- pick(paste0("adm", l, c("_name", "_en")))
-    x[[paste0("adm", l, "_code")]] <- pick(paste0("adm", l, "_pcode"))
+    x[[paste0("adm", l)]] <- .pick(paste0("adm", l, c("_name", "_en")))
+    x[[paste0("adm", l, "_code")]] <- .pick(paste0("adm", l, "_pcode"))
   }
 
   dataset_date <- .first_date(meta$dataset_date)
@@ -496,14 +496,14 @@ list_boundaries <- function(
 #' @noRd
 .list_boundaries_geoboundaries <- function(iso3) {
   meta <- .geoboundaries_meta(iso3, "ALL")
-  field <- function(name) {
+  .field <- function(name) {
     unique(vapply(meta, function(m) .or_na(m[[name]]), character(1)))
   }
   list(
     available = length(meta) > 0,
-    levels = paste(sub("^ADM", "", field("boundaryType")), collapse = ", "),
-    version = paste(field("boundaryYearRepresented"), collapse = ", "),
-    licence = paste(field("boundaryLicense"), collapse = ", "),
+    levels = paste(sub("^ADM", "", .field("boundaryType")), collapse = ", "),
+    version = paste(.field("boundaryYearRepresented"), collapse = ", "),
+    licence = paste(.field("boundaryLicense"), collapse = ", "),
     url = sprintf(
       "https://www.geoboundaries.org/api/current/gbOpen/%s/ALL/", iso3
     )
@@ -726,7 +726,7 @@ who_services <- c(
       dplyr::filter(ENDDATE == "253402214400000" | is.na(ENDDATE))
   }
 
-  ms_to_date <- function(ms) {
+  .ms_to_date <- function(ms) {
     as.Date(as.POSIXct(as.numeric(ms) / 1000, origin = "1970-01-01"))
   }
 
@@ -737,16 +737,16 @@ who_services <- c(
       dplyr::transmute(
         adm0_code = ISO_3_CODE,
         adm0 = ADM0_NAME,
-        start_date = ms_to_date(STARTDATE),
-        end_date = ms_to_date(ENDDATE)
+        start_date = .ms_to_date(STARTDATE),
+        end_date = .ms_to_date(ENDDATE)
       ),
     ADM1 = new_sf |>
       dplyr::transmute(
         adm0_code = ISO_3_CODE,
         adm0 = ADM0_NAME,
         adm1 = ADM1_NAME,
-        start_date = ms_to_date(STARTDATE),
-        end_date = ms_to_date(ENDDATE)
+        start_date = .ms_to_date(STARTDATE),
+        end_date = .ms_to_date(ENDDATE)
       ),
     ADM2 = new_sf |>
       dplyr::transmute(
@@ -754,8 +754,8 @@ who_services <- c(
         adm0 = ADM0_NAME,
         adm1 = ADM1_NAME,
         adm2 = ADM2_NAME,
-        start_date = ms_to_date(STARTDATE),
-        end_date = ms_to_date(ENDDATE)
+        start_date = .ms_to_date(STARTDATE),
+        end_date = .ms_to_date(ENDDATE)
       )
   )
 

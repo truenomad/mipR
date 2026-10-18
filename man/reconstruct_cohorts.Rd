@@ -2,11 +2,15 @@
 % Please edit documentation in R/reconstruct_cohorts.R
 \name{reconstruct_cohorts}
 \alias{reconstruct_cohorts}
-\title{Reconstruct Monthly Birth Cohorts from Population Anchors}
+\title{Reconstruct Monthly Birth Cohorts from Annual Population by Age}
 \usage{
 reconstruct_cohorts(
-  anchors,
-  geography = "geography",
+  data,
+  geography,
+  year = "year",
+  age = "age",
+  population = "pop",
+  ref_date = "01-01",
   start = NULL,
   end = NULL,
   max_age_months = 179,
@@ -14,13 +18,21 @@ reconstruct_cohorts(
 )
 }
 \arguments{
-\item{anchors}{A data frame of population estimates with the
-\code{geography} columns, \code{ref_date} (Date), \code{age_lower} and \code{age_upper}
-(age in completed months, upper bound exclusive) and \code{population}, as
-returned by \code{\link[=make_anchors]{make_anchors()}}.}
+\item{data}{A data frame with one row per geography, year and single
+year of age, such as the output of \code{\link[=extract_raster]{extract_raster()}} on rasters from
+\code{\link[=get_worldpop_single_age]{get_worldpop_single_age()}}.}
 
-\item{geography}{Columns of \code{anchors} that identify the geography.
-Default \code{"geography"}.}
+\item{geography}{Columns of \code{data} that identify the geography.}
+
+\item{year}{Name of the year column. Default \code{"year"}.}
+
+\item{age}{Name of the column holding age in completed years. Default
+\code{"age"}.}
+
+\item{population}{Name of the population column. Default \code{"pop"}.}
+
+\item{ref_date}{Reference date of the estimates within each year, as
+\code{"MM-DD"}. Default \code{"01-01"}, the WorldPop R2025A reference date.}
 
 \item{start, end}{First and last calendar month of the output, as Dates or
 \code{"YYYY-MM"}. Default: the earliest birth month covered by the anchors,
@@ -40,15 +52,17 @@ month), \code{age_months} and \code{population}}
 \item{cohort_changes}{One row per cohort and pair of consecutive
 anchor dates: sizes at each date and \code{change}, the proportional
 change between them}
-\item{anchor_check}{Each anchor with the population rebuilt from the
-cohorts at its reference date, and the difference}
+\item{anchor_check}{Each anchor (geography, \code{ref_date}, \code{age_lower}
+and \code{age_upper} in months, and \code{population}) with the population
+rebuilt from the cohorts at its reference date, and the difference}
 \item{metadata}{The method and the assumptions used}
 }
 }
 \description{
 Rebuilds the population by month of birth and calendar month from annual
-population estimates by age (the anchors), keeping each birth cohort
-consistent across years.
+population estimates by single year of age, keeping each birth cohort
+consistent across years. Each estimate (a geography, year and age) is an
+anchor for the cohorts it covers.
 }
 \details{
 This is the uniform method (version 0.1). For each anchor, births are
@@ -76,10 +90,9 @@ pop <- data.frame(
   adm1 = "Kano",
   year = rep(c(2024, 2025), each = 2),
   age = rep(0:1, 2),
-  sum = c(1180, 1130, 1200, 1150)
+  pop = c(1180, 1130, 1200, 1150)
 )
-anchors <- make_anchors(pop, geography = "adm1")
-cohorts <- reconstruct_cohorts(anchors, geography = "adm1")
+cohorts <- reconstruct_cohorts(pop, geography = "adm1")
 head(cohorts$cohorts)
 cohorts$cohort_changes
 }

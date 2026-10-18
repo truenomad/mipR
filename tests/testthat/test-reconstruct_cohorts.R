@@ -1,14 +1,14 @@
-# make_anchors and reconstruct_cohorts -----------------------------------------
+# reconstruct_cohorts ----------------------------------------------------------
 
 kano <- data.frame(
   adm1 = "Kano",
   year = rep(c(2024, 2025), each = 2),
   age = rep(0:1, 2),
-  sum = c(1180, 1130, 1200, 1150)
+  pop = c(1180, 1130, 1200, 1150)
 )
 
-testthat::test_that("make_anchors converts years of age to months", {
-  anchors <- make_anchors(kano, geography = "adm1")
+testthat::test_that(".make_anchors converts years of age to months", {
+  anchors <- .make_anchors(kano, "adm1", "year", "age", "pop", "01-01")
 
   testthat::expect_named(
     anchors,
@@ -17,20 +17,11 @@ testthat::test_that("make_anchors converts years of age to months", {
   testthat::expect_identical(anchors$ref_date[3], as.Date("2025-01-01"))
   testthat::expect_identical(anchors$age_lower, c(0L, 12L, 0L, 12L))
   testthat::expect_identical(anchors$age_upper, c(12L, 24L, 12L, 24L))
-  testthat::expect_error(
-    make_anchors(kano, geography = "adm2"),
-    "not in"
-  )
 })
 
 testthat::test_that("a single anchor is spread over birth months by day", {
-  anchors <- data.frame(
-    geography = "A",
-    ref_date = as.Date("2025-01-01"),
-    age_lower = 0, age_upper = 12,
-    population = 366
-  )
-  out <- reconstruct_cohorts(anchors)
+  pop <- data.frame(geography = "A", year = 2025, age = 0, pop = 366)
+  out <- reconstruct_cohorts(pop, geography = "geography")
   cohorts <- out$cohorts
 
   # aged 0 on 1 January 2025 means born in 2024, a leap year
@@ -48,13 +39,8 @@ testthat::test_that("a single anchor is spread over birth months by day", {
 })
 
 testthat::test_that("a 1 July reference date shifts the birth window", {
-  anchors <- data.frame(
-    geography = "A",
-    ref_date = as.Date("2025-07-01"),
-    age_lower = 0, age_upper = 12,
-    population = 365
-  )
-  out <- reconstruct_cohorts(anchors)
+  pop <- data.frame(geography = "A", year = 2025, age = 0, pop = 365)
+  out <- reconstruct_cohorts(pop, geography = "geography", ref_date = "07-01")
 
   births <- unique(out$cohorts$birth_month)
   testthat::expect_identical(min(births), as.Date("2024-07-01"))
@@ -62,8 +48,7 @@ testthat::test_that("a 1 July reference date shifts the birth window", {
 })
 
 testthat::test_that("cohorts are interpolated along the cohort", {
-  anchors <- make_anchors(kano, geography = "adm1")
-  out <- reconstruct_cohorts(anchors, geography = "adm1")
+  out <- reconstruct_cohorts(kano, geography = "adm1")
 
   # the January 2024 cohort is age 0 on 1 Jan 2025 and has one anchor;
   # the January 2023 cohort is seen at age 0 (2024) and age 1 (2025)
@@ -83,9 +68,8 @@ testthat::test_that("cohorts are interpolated along the cohort", {
 })
 
 testthat::test_that("max_age_months and the date range limit the output", {
-  anchors <- make_anchors(kano, geography = "adm1")
   out <- reconstruct_cohorts(
-    anchors,
+    kano,
     geography = "adm1",
     start = "2024-06", end = "2024-12", max_age_months = 6
   )
@@ -97,15 +81,24 @@ testthat::test_that("max_age_months and the date range limit the output", {
   )
 })
 
-testthat::test_that("reconstruct_cohorts validates anchors", {
-  bad <- data.frame(
-    geography = "A", ref_date = as.Date("2025-01-01"),
-    age_lower = 12, age_upper = 12, population = 10
-  )
-  testthat::expect_error(reconstruct_cohorts(bad), "age_upper")
+testthat::test_that("reconstruct_cohorts validates its input", {
   testthat::expect_error(
-    reconstruct_cohorts(bad[, -5]),
-    "make_anchors"
+    reconstruct_cohorts(kano, geography = "adm2"),
+    "not in"
+  )
+  bad_age <- transform(kano, age = c(0, -1, 0, 1))
+  testthat::expect_error(
+    reconstruct_cohorts(bad_age, geography = "adm1"),
+    "whole years"
+  )
+  bad_pop <- transform(kano, pop = c(1, NA, 1, 1))
+  testthat::expect_error(
+    reconstruct_cohorts(bad_pop, geography = "adm1"),
+    "zero or more"
+  )
+  testthat::expect_error(
+    reconstruct_cohorts(kano, geography = "adm1", ref_date = "1 Jan"),
+    "MM-DD"
   )
 })
 

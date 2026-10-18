@@ -1,40 +1,9 @@
 # anchors and reconstruction ---------------------------------------------------
 
-#' Prepare Population Anchors for Cohort Reconstruction
-#'
-#' Converts a table of population by single year of age, such as the output
-#' of [extract_raster()] on rasters from [get_worldpop_single_age()], into
-#' the anchor format used by [reconstruct_cohorts()].
-#'
-#' @param data A data frame with one row per geography, year and single year
-#'   of age.
-#' @param geography Columns of `data` that identify the geography.
-#' @param year Name of the year column. Default `"year"`.
-#' @param age Name of the column holding age in completed years. Default
-#'   `"age"`.
-#' @param population Name of the population column. Default `"sum"`, as
-#'   written by [extract_raster()].
-#' @param ref_date Reference date of the estimates within each year, as
-#'   `"MM-DD"`. Default `"01-01"`, the WorldPop R2025A reference date.
-#'
-#' @return A data frame with the `geography` columns, `ref_date`,
-#'   `age_lower` and `age_upper` (age in months, upper bound exclusive) and
-#'   `population`.
-#'
-#' @examples
-#' pop <- data.frame(
-#'   adm1 = "Kano", year = 2025, age = 0:1, sum = c(1200, 1150)
-#' )
-#' make_anchors(pop, geography = "adm1")
-#' @export
-make_anchors <- function(
-  data,
-  geography,
-  year = "year",
-  age = "age",
-  population = "sum",
-  ref_date = "01-01"
-) {
+# internal helper: turn population by single year of age into anchors, with
+# age in completed months (upper bound exclusive) and an exact reference date
+#' @noRd
+.make_anchors <- function(data, geography, year, age, population, ref_date) {
   needed <- c(geography, year, age, population)
   missing_cols <- setdiff(needed, names(data))
   if (length(missing_cols) > 0) {
@@ -46,6 +15,11 @@ make_anchors <- function(
     )
   }
 
+  ages <- data[[age]]
+  if (!is.numeric(ages) || any(is.na(ages) | ages < 0 | ages %% 1 != 0)) {
+    cli::cli_abort("{.arg age} must hold whole years of age, 0 or more.")
+  }
+
   out <- data[, geography, drop = FALSE]
   out$ref_date <- .as_date(paste0(data[[year]], "-", ref_date), "ref_date")
   out$age_lower <- as.integer(data[[age]]) * 12L
@@ -55,11 +29,12 @@ make_anchors <- function(
   out
 }
 
-#' Reconstruct Monthly Birth Cohorts from Population Anchors
+#' Reconstruct Monthly Birth Cohorts from Annual Population by Age
 #'
 #' Rebuilds the population by month of birth and calendar month from annual
-#' population estimates by age (the anchors), keeping each birth cohort
-#' consistent across years.
+#' population estimates by single year of age, keeping each birth cohort
+#' consistent across years. Each estimate (a geography, year and age) is an
+#' anchor for the cohorts it covers.
 #'
 #' @details
 #' This is the uniform method (version 0.1). For each anchor, births are
@@ -82,12 +57,16 @@ make_anchors <- function(
 #' that month. A cohort is present from its birth month, where `age_months`
 #' is 0.
 #'
-#' @param anchors A data frame of population estimates with the
-#'   `geography` columns, `ref_date` (Date), `age_lower` and `age_upper`
-#'   (age in completed months, upper bound exclusive) and `population`, as
-#'   returned by [make_anchors()].
-#' @param geography Columns of `anchors` that identify the geography.
-#'   Default `"geography"`.
+#' @param data A data frame with one row per geography, year and single
+#'   year of age, such as the output of [extract_raster()] on rasters from
+#'   [get_worldpop_single_age()].
+#' @param geography Columns of `data` that identify the geography.
+#' @param year Name of the year column. Default `"year"`.
+#' @param age Name of the column holding age in completed years. Default
+#'   `"age"`.
+#' @param population Name of the population column. Default `"pop"`.
+#' @param ref_date Reference date of the estimates within each year, as
+#'   `"MM-DD"`. Default `"01-01"`, the WorldPop R2025A reference date.
 #' @param start,end First and last calendar month of the output, as Dates or
 #'   `"YYYY-MM"`. Default: the earliest birth month covered by the anchors,
 #'   and the month of the latest anchor date.
@@ -103,8 +82,9 @@ make_anchors <- function(
 #'     \item{cohort_changes}{One row per cohort and pair of consecutive
 #'       anchor dates: sizes at each date and `change`, the proportional
 #'       change between them}
-#'     \item{anchor_check}{Each anchor with the population rebuilt from the
-#'       cohorts at its reference date, and the difference}
+#'     \item{anchor_check}{Each anchor (geography, `ref_date`, `age_lower`
+#'       and `age_upper` in months, and `population`) with the population
+#'       rebuilt from the cohorts at its reference date, and the difference}
 #'     \item{metadata}{The method and the assumptions used}
 #'   }
 #'
@@ -113,23 +93,27 @@ make_anchors <- function(
 #'   adm1 = "Kano",
 #'   year = rep(c(2024, 2025), each = 2),
 #'   age = rep(0:1, 2),
-#'   sum = c(1180, 1130, 1200, 1150)
+#'   pop = c(1180, 1130, 1200, 1150)
 #' )
-#' anchors <- make_anchors(pop, geography = "adm1")
-#' cohorts <- reconstruct_cohorts(anchors, geography = "adm1")
+#' cohorts <- reconstruct_cohorts(pop, geography = "adm1")
 #' head(cohorts$cohorts)
 #' cohorts$cohort_changes
 #' @export
 reconstruct_cohorts <- function(
-  anchors,
-  geography = "geography",
+  data,
+  geography,
+  year = "year",
+  age = "age",
+  population = "pop",
+  ref_date = "01-01",
   start = NULL,
   end = NULL,
   max_age_months = 179,
   method = "uniform"
 ) {
   method <- match.arg(method, "uniform")
-  anchors <- .check_anchors(anchors, geography)
+  anchors <- .make_anchors(data, geography, year, age, population, ref_date)
+  anchors <- .check_anchors(anchors)
 
   key <- .geography_key(anchors, geography)
   geo_lookup <- anchors[!duplicated(key), geography, drop = FALSE]
@@ -191,26 +175,9 @@ reconstruct_cohorts <- function(
   )
 }
 
-# internal helper: validate the anchor table
+# internal helper: check anchor populations
 #' @noRd
-.check_anchors <- function(anchors, geography) {
-  needed <- c(geography, "ref_date", "age_lower", "age_upper", "population")
-  missing_cols <- setdiff(needed, names(anchors))
-  if (length(missing_cols) > 0) {
-    cli::cli_abort(c(
-      "Column{?s} {.val {missing_cols}} not in {.arg anchors}.",
-      "i" = "Use {.fn make_anchors} to build the anchor table."
-    ))
-  }
-  anchors$ref_date <- .as_date(anchors$ref_date, "ref_date")
-  bad_age <- !is.finite(anchors$age_lower) | !is.finite(anchors$age_upper) |
-    anchors$age_lower < 0 | anchors$age_upper <= anchors$age_lower
-  if (any(bad_age)) {
-    cli::cli_abort(paste0(
-      "{.arg age_lower} and {.arg age_upper} must be finite, with ",
-      "{.arg age_upper} above {.arg age_lower}."
-    ))
-  }
+.check_anchors <- function(anchors) {
   if (any(is.na(anchors$population) | anchors$population < 0)) {
     cli::cli_abort("{.arg population} must be zero or more, without NA.")
   }
