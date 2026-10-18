@@ -10,3 +10,5 @@
   `get_worldpop_paths()` to download WorldPop population rasters.
 * Added `get_ihme_mcv()` to download the IHME geospatial MCV1 and MCV2
   coverage estimates and methods documentation, using the latest release.
+* Added `get_demog_wpp()` to get the age distribution, crude birth and
+  death rates and daily birth rate for a country from UN WPP 2024.
