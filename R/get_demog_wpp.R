@@ -25,11 +25,12 @@
 #'
 #' @return A list of two data frames:
 #'   \describe{
-#'     \item{rates}{One row per year with `country`, `year`,
+#'     \item{rates}{One row per year with `country` (upper case), `iso3`,
+#'       `year`,
 #'       `crude_birth_rate` and `crude_death_rate` (per 1,000 population per
 #'       year) and `birth_rate_daily` (births per person per day)}
 #'     \item{age_distribution}{One row per year and single year of age (0 to
-#'       100) with `country`, `year`, `age`, `proportion`,
+#'       100) with `country`, `iso3`, `year`, `age`, `proportion`,
 #'       `cumulative_proportion` and `age_days`}
 #'   }
 #'
@@ -67,6 +68,10 @@ get_demog_wpp <- function(country, year) {
   country_name <- .match_wpp_country(country, locations)
   pop_age <- pop_age[pop_age$name == country_name, ]
   misc <- misc[misc$name == country_name, ]
+  iso3 <- suppressWarnings(countrycode::countrycode(
+    pop_age$country_code[1], "un", "iso3c",
+    custom_match = stats::setNames(names(.wpp_extra_m49), .wpp_extra_m49)
+  ))
 
   available_years <- intersect(unique(pop_age$year), unique(misc$year))
   years_used <- vapply(
@@ -84,7 +89,8 @@ get_demog_wpp <- function(country, year) {
 
   rates <- misc[match(years_used, misc$year), c("year", "cbr", "cdr")]
   rates <- data.frame(
-    country = country_name,
+    country = toupper(country_name),
+    iso3 = iso3,
     year = years_used,
     crude_birth_rate = rates$cbr,
     crude_death_rate = rates$cdr,
@@ -96,7 +102,8 @@ get_demog_wpp <- function(country, year) {
     age_data <- age_data[order(age_data$age), ]
     proportion <- age_data$pop / sum(age_data$pop)
     data.frame(
-      country = country_name,
+      country = toupper(country_name),
+      iso3 = iso3,
       year = yr,
       age = as.integer(age_data$age),
       proportion = proportion,
@@ -123,13 +130,19 @@ get_demog_wpp <- function(country, year) {
   as.data.frame(env[[name]])
 }
 
+# WPP locations that have no UN M49 code in countrycode
+.wpp_extra_m49 <- c(TWN = 158, XKX = 412)
+
 # internal helper: match an ISO3 code or a country name to a wpp2024 name.
 # locations has columns country_code (UN M49) and name
 #' @noRd
 .match_wpp_country <- function(country, locations) {
   if (grepl("^[A-Za-z]{3}$", country)) {
     m49 <- suppressWarnings(
-      countrycode::countrycode(toupper(country), "iso3c", "un")
+      countrycode::countrycode(
+        toupper(country), "iso3c", "un",
+        custom_match = .wpp_extra_m49
+      )
     )
     matched <- locations$name[locations$country_code %in% m49]
     if (length(matched) > 0) {

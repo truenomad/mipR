@@ -16,11 +16,12 @@ not match exactly is accepted if it matches part of exactly one name.}
 \value{
 A list of two data frames:
 \describe{
-\item{rates}{One row per year with \code{country}, \code{year},
+\item{rates}{One row per year with \code{country} (upper case), \code{iso3},
+\code{year},
 \code{crude_birth_rate} and \code{crude_death_rate} (per 1,000 population per
 year) and \code{birth_rate_daily} (births per person per day)}
 \item{age_distribution}{One row per year and single year of age (0 to
-100) with \code{country}, \code{year}, \code{age}, \code{proportion},
+100) with \code{country}, \code{iso3}, \code{year}, \code{age}, \code{proportion},
 \code{cumulative_proportion} and \code{age_days}}
 }
 }

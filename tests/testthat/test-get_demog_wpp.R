@@ -43,6 +43,12 @@ testthat::test_that("get_demog_wpp returns rates and age distribution", {
   out <- suppressMessages(get_demog_wpp("NGA", 2022:2025))
 
   testthat::expect_named(out, c("rates", "age_distribution"))
+  testthat::expect_identical(unique(out$rates$country), "NIGERIA")
+  testthat::expect_identical(unique(out$rates$iso3), "NGA")
+  testthat::expect_identical(
+    names(out$age_distribution)[1:3],
+    c("country", "iso3", "year")
+  )
   testthat::expect_identical(out$rates$year, 2022:2025)
   testthat::expect_equal(
     out$rates$birth_rate_daily,
