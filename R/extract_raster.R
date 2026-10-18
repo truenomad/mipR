@@ -20,8 +20,15 @@
 #'   also ignored before trying again.
 #'
 #' Files without a date get no time columns. For a multi-layer raster
-#' every layer is extracted, and a layer name that is a year (for example
-#' `2010` or `mcv1_2010`) overrides the year in the filename.
+#' (a stack) every layer is extracted and named in the `layer` column. Each
+#' layer's year comes from its name when the name holds a year (for example
+#' `2010` or `mcv1_2010`). Otherwise, when the filename holds a year range
+#' with one year per layer, the layers take those years in order: the IHME
+#' file `mcv1_coverage_mean_2000_2025.tif` has 26 unnamed layers, which
+#' become 2000 to 2025. For that file the ascending order was checked
+#' against IHME's own state-level table for Nigeria (correlation 0.998;
+#' the reversed or shifted orders fit clearly worse). The layer year is also
+#' used to match population rasters.
 #'
 #' **Population weights.** `"weighted_mean"` and `"weighted_median"` need
 #' `pop_rasters`. A single population raster is used for every value
@@ -140,13 +147,11 @@ extract_raster <- function(
       shp <- sf::st_transform(shp, terra::crs(r))
     }
     r <- terra::crop(r, terra::vect(shp), snap = "out")
+    layer_years <- .layer_years(names(r), basename(rasters[i]))
 
     layers <- lapply(seq_len(terra::nlyr(r)), function(k) {
       info <- file_info[rep(i, nrow(ids)), , drop = FALSE]
-      layer_year <- NA_integer_
-      if (terra::nlyr(r) > 1) {
-        layer_year <- .last_plausible_year(names(r)[k])
-      }
+      layer_year <- layer_years[k]
       year_k <- if (!is.na(layer_year)) layer_year else info$year[1]
       if (is.null(year_k)) {
         year_k <- NA_integer_
@@ -178,7 +183,7 @@ extract_raster <- function(
       out <- cbind(ids, info, stats)
       if (terra::nlyr(r) > 1) {
         out$layer <- names(r)[k]
-        if (!is.na(layer_year) && "year" %in% names(out)) {
+        if (!is.na(layer_year)) {
           out$year <- layer_year
         }
       }
@@ -443,14 +448,44 @@ extract_raster <- function(
 # internal helper: last plausible year (1980-2099) in a string, or NA
 #' @noRd
 .last_plausible_year <- function(x) {
-  years <- regmatches(
-    x,
-    gregexpr(.date_patterns$yearly, x, perl = TRUE)
-  )[[1]]
+  years <- .plausible_years(x)
   if (length(years) == 0) {
     return(NA_integer_)
   }
-  as.integer(years[length(years)])
+  years[length(years)]
+}
+
+# internal helper: every plausible year (1980-2099) in a string
+#' @noRd
+.plausible_years <- function(x) {
+  as.integer(regmatches(
+    x,
+    gregexpr(.date_patterns$yearly, x, perl = TRUE)
+  )[[1]])
+}
+
+# internal helper: year of each layer of a multi-layer raster, from the
+# layer names, or else from a year range in the filename that has one year
+# per layer (mcv1_coverage_mean_2000_2025.tif with 26 layers); NA otherwise
+#' @noRd
+.layer_years <- function(layer_names, file_name) {
+  n <- length(layer_names)
+  if (n == 1) {
+    return(NA_integer_)
+  }
+  from_names <- vapply(layer_names, .last_plausible_year, integer(1))
+  if (!all(is.na(from_names))) {
+    return(unname(from_names))
+  }
+  in_file <- .plausible_years(tools::file_path_sans_ext(file_name))
+  if (length(in_file) >= 2) {
+    first <- min(in_file)
+    last <- max(in_file)
+    if (last - first + 1L == n) {
+      return(seq.int(first, last))
+    }
+  }
+  rep(NA_integer_, n)
 }
 
 # internal helper: give every data frame the same columns before rbind

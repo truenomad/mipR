@@ -75,8 +75,15 @@ also ignored before trying again.
 }
 
 Files without a date get no time columns. For a multi-layer raster
-every layer is extracted, and a layer name that is a year (for example
-\code{2010} or \code{mcv1_2010}) overrides the year in the filename.
+(a stack) every layer is extracted and named in the \code{layer} column. Each
+layer's year comes from its name when the name holds a year (for example
+\code{2010} or \code{mcv1_2010}). Otherwise, when the filename holds a year range
+with one year per layer, the layers take those years in order: the IHME
+file \code{mcv1_coverage_mean_2000_2025.tif} has 26 unnamed layers, which
+become 2000 to 2025. For that file the ascending order was checked
+against IHME's own state-level table for Nigeria (correlation 0.998;
+the reversed or shifted orders fit clearly worse). The layer year is also
+used to match population rasters.
 
 \strong{Population weights.} \code{"weighted_mean"} and \code{"weighted_median"} need
 \code{pop_rasters}. A single population raster is used for every value

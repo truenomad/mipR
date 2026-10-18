@@ -36,9 +36,9 @@
   shapefiles directly from their zip archives.
 * Added `reconstruct_birth_cohorts()` to rebuild the population by month of
   birth and calendar month from annual population by single year of age
-  (#8). The `"uniform"` method spreads each anchor over its birth months; `"survival"`
-  estimates births by month and carries cohorts forward with monthly
-  survival from WPP mortality; `"constrained"` (the default) reweights
+  (#8). The `"uniform"` method spreads each anchor over its birth months;
+  `"survival"` estimates births by month and carries cohorts forward with
+  monthly survival from WPP mortality; `"constrained"` (the default) reweights
   anchors so that outlying ones pull the fit less. Cohorts can be extended
   past the last anchor with the national births trend and an optional
   birth seasonality profile. The output reports births, unexplained cohort
@@ -63,3 +63,6 @@
   nearest year). The output then includes `pop_sum`, the population in each
   polygon. In a folder, `pop_pattern` picks the under-one rasters from
   `get_worldpop_single_age()` by default.
+* `extract_raster()` gives each layer of a stack without year names the
+  years of the range in its filename, such as 2000 to 2025 for the 26 layers
+  of the IHME MCV1 rasters.

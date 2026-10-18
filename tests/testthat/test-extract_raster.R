@@ -260,3 +260,46 @@ testthat::test_that(".weighted_median finds the half-weight value", {
   testthat::expect_identical(.weighted_median(c(3, 1, 2), c(1, 1, 5)), 2)
   testthat::expect_identical(.weighted_median(c(1, 2), c(0, 0)), NA_real_)
 })
+
+testthat::test_that("layers of a stack take the years in the filename", {
+  testthat::expect_identical(
+    .layer_years(paste0("layer.", 1:26), "mcv1_coverage_mean_2000_2025.tif"),
+    2000:2025
+  )
+  testthat::expect_identical(
+    .layer_years(c("cov_2010", "cov_2011"), "cov_2000_2025.tif"),
+    2010:2011
+  )
+  testthat::expect_identical(
+    .layer_years(c("a", "b"), "cov_2000_2025.tif"),
+    c(NA_integer_, NA_integer_)
+  )
+  testthat::expect_identical(.layer_years("a", "cov_2020.tif"), NA_integer_)
+})
+
+testthat::test_that("extract_raster splits a stack by year and weights it", {
+  dir <- tempfile("stack_")
+  dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  fx <- weight_fixture(dir)
+
+  stack <- terra::rast(
+    nrows = 2, ncols = 2, xmin = 0, xmax = 2, ymin = 0, ymax = 2,
+    crs = "EPSG:4326", nlyrs = 2
+  )
+  terra::values(stack) <- cbind(c(0.1, 0.2, 0.3, 0.4), c(0.5, 0.5, 0.5, 0.5))
+  stack_path <- file.path(dir, "mcv1_coverage_mean_2020_2021.tif")
+  suppressWarnings(terra::writeRaster(stack, stack_path))
+
+  out <- extract_raster(
+    stack_path, fx$polys,
+    id_cols = "adm2", fun = c("mean", "weighted_mean"),
+    pop_rasters = fx$pop, pop_pattern = "_pop_", quiet = TRUE
+  )
+
+  testthat::expect_identical(out$year, 2020:2021)
+  testthat::expect_identical(nrow(out), 2L)
+  # 2020 uses the 2020 population, which sits on the 0.4 cell
+  testthat::expect_equal(out$weighted_mean, c(0.4, 0.5))
+  testthat::expect_identical(out$pop_sum, c(10, 16))
+})
