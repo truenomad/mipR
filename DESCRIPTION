@@ -18,7 +18,13 @@ Depends:
 Imports: 
     cli,
     curl,
-    httr2
+    dplyr,
+    httr2,
+    sf,
+    stats,
+    terra,
+    tools,
+    utils
 Suggests: 
     knitr,
     rmarkdown,
