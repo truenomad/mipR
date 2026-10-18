@@ -63,12 +63,42 @@ testthat::test_that(".standardise_boundaries returns the standard columns", {
   testthat::expect_identical(
     names(out),
     c(
-      "adm0_code", "adm0", "adm1", "adm1_code", "adm2", "adm2_code",
-      "source", "geometry"
+      "adm0", "adm1", "adm1_code", "adm2", "adm2_code",
+      "start_date", "end_date", "source", "geometry"
     )
   )
   testthat::expect_true(is.na(out$adm1))
-  testthat::expect_identical(out$source, "ocha")
+  testthat::expect_true(is.na(out$adm1_code))
+  testthat::expect_s3_class(out$start_date, "Date")
+})
+
+testthat::test_that(".standardise_boundaries hashes the names of each level", {
+  x <- sf::st_sf(
+    adm0 = c("Nigeria", "Nigeria", "NIGERIA "),
+    adm1 = c("Kano", "Kano", "kano"),
+    adm2 = c("Dala", "Fagge", "Dala"),
+    geom = sf::st_sfc(
+      sf::st_point(c(8, 12)), sf::st_point(c(8.5, 12)),
+      sf::st_point(c(8, 12)),
+      crs = 4326
+    )
+  )
+
+  out <- .standardise_boundaries(x, level = 2, source = "gadm")
+
+  testthat::expect_identical(
+    out$adm1_code[1],
+    substr(as.character(openssl::md5("nigeria|kano")), 1, 12)
+  )
+  testthat::expect_identical(
+    out$adm2_code[1],
+    substr(as.character(openssl::md5("nigeria|kano|dala")), 1, 12)
+  )
+  # same parents, different unit
+  testthat::expect_identical(out$adm1_code[1], out$adm1_code[2])
+  testthat::expect_false(out$adm2_code[1] == out$adm2_code[2])
+  # case and spacing do not change the code
+  testthat::expect_identical(out$adm2_code[1], out$adm2_code[3])
 })
 
 testthat::test_that("get_boundaries reports network errors", {
@@ -92,7 +122,7 @@ testthat::test_that("get_boundaries downloads OCHA COD-AB boundaries", {
   result <- get_boundaries("TCD", adm_level = 2, source = "ocha", cache = FALSE)
 
   testthat::expect_s3_class(result, "sf")
-  testthat::expect_true(all(result$adm0_code == "TCD"))
+  testthat::expect_true(all(result$adm0 == "Chad"))
   testthat::expect_false(anyNA(result$adm2_code))
   testthat::expect_identical(unique(result$source), "ocha")
 })
@@ -119,7 +149,6 @@ testthat::test_that("get_boundaries downloads GADM boundaries", {
   result <- get_boundaries("COM", adm_level = 1, source = "gadm", cache = FALSE)
 
   testthat::expect_s3_class(result, "sf")
-  testthat::expect_true(all(result$adm0_code == "COM"))
   testthat::expect_false(anyNA(result$adm1_code))
 })
 
@@ -218,7 +247,7 @@ testthat::test_that(".get_boundaries_who saves to file when dest_path set", {
   skip_who_integration()
 
   temp_dir <- tempdir()
-  expected_file <- file.path(temp_dir, "who_shapefile_com_adm0_latest.gpkg")
+  expected_file <- file.path(temp_dir, "com_adm0_latest_who.gpkg")
 
   if (file.exists(expected_file)) unlink(expected_file)
 
@@ -248,8 +277,8 @@ testthat::test_that(".get_boundaries_who handles incremental updates", {
   skip_who_integration()
 
   temp_dir <- tempdir()
-  first_file <- file.path(temp_dir, "who_shapefile_com_adm0_latest.gpkg")
-  second_file <- file.path(temp_dir, "who_shapefile_com_syc_adm0_latest.gpkg")
+  first_file <- file.path(temp_dir, "com_adm0_latest_who.gpkg")
+  second_file <- file.path(temp_dir, "com_syc_adm0_latest_who.gpkg")
 
   if (file.exists(first_file)) unlink(first_file)
   if (file.exists(second_file)) unlink(second_file)
@@ -311,7 +340,7 @@ testthat::test_that(".get_boundaries_who creates missing directories", {
   skip_who_integration()
 
   temp_dir <- file.path(tempdir(), "new_test_dir", "nested")
-  expected_file <- file.path(temp_dir, "who_shapefile_com_adm0_latest.gpkg")
+  expected_file <- file.path(temp_dir, "com_adm0_latest_who.gpkg")
 
   if (dir.exists(temp_dir)) unlink(temp_dir, recursive = TRUE)
 
@@ -411,6 +440,6 @@ testthat::test_that(".get_boundaries_who validates geometries", {
 
   testthat::expect_true(all(sf::st_is_valid(result_saved)))
 
-  expected_file <- file.path(temp_dir, "who_shapefile_com_adm0_latest.gpkg")
+  expected_file <- file.path(temp_dir, "com_adm0_latest_who.gpkg")
   if (file.exists(expected_file)) unlink(expected_file)
 })

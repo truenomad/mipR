@@ -22,6 +22,7 @@ Imports:
     dplyr,
     exactextractr,
     httr2,
+    openssl,
     sf,
     stats,
     terra,

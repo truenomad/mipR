@@ -17,8 +17,7 @@
 #'
 #' - `"ocha"`: OCHA COD-AB from the Humanitarian Data Exchange (HDX). The
 #'   dataset is resolved through the HDX API, so the most recent published
-#'   version is used. Place codes (P-codes) are returned in the `*_code`
-#'   columns.
+#'   version is used.
 #' - `"geoboundaries"`: geoBoundaries gbOpen release. Only the requested
 #'   level is published in each file, so the names of parent units are `NA`.
 #' - `"gadm"`: GADM version 4.1. GADM data are free for academic and other
@@ -28,9 +27,13 @@
 #'   returns historical boundaries as well as current ones.
 #'
 #' When `cache = TRUE`, downloaded files are kept in `cache_dir` and reused.
-#' OCHA and geoBoundaries files are named by dataset version, so a new
-#' release is downloaded automatically. Set `cache = FALSE` to download into a
-#' temporary directory instead.
+#' Each download is a single file in `cache_dir`, with no subfolders, and
+#' the source is the last part of the filename: for example
+#' `nga_cod_ab_20190417_ocha.zip`, `nga-adm2-..._geoboundaries.geojson`,
+#' `nga_v41_gadm.zip` and `nga_adm2_latest_who.gpkg`. Shapefiles are read
+#' directly from the zip archives. OCHA and geoBoundaries files are named by
+#' dataset version, so a new release is downloaded automatically. Set
+#' `cache = FALSE` to download into a temporary directory instead.
 #'
 #' @param country Character vector of ISO3 country codes (e.g. `"AFG"`).
 #' @param adm_level Administrative level, as a number (`0`, `1`, `2`, ...) or a
@@ -48,14 +51,17 @@
 #'
 #' @return An `sf` object in EPSG:4326 with the columns:
 #'   \describe{
-#'     \item{adm0_code}{ISO3 country code}
 #'     \item{adm0}{Country name}
-#'     \item{adm1, adm2, ...}{Unit names for each level up to `level`}
-#'     \item{adm1_code, adm2_code, ...}{Unit codes for each level up to
-#'       `level` (OCHA P-codes, GADM GIDs or geoBoundaries shape IDs; `NA`
-#'       for WHO)}
-#'     \item{start_date, end_date}{WHO only: dates when the boundary came
-#'       into and went out of use}
+#'     \item{adm1, adm2, ...}{Unit names for each level up to `adm_level`}
+#'     \item{adm1_code, adm2_code, ...}{Codes made from the unit's name and
+#'       the names of its parents: `adm1_code` from `adm0` and `adm1`,
+#'       `adm2_code` from `adm0`, `adm1` and `adm2`, and so on. Each is the
+#'       first 12 characters of the MD5 hash of the names, lower-cased and
+#'       joined with `|`, so the same unit gets the same code from every
+#'       source that spells its names the same way. `NA` when the unit name
+#'       is missing}
+#'     \item{start_date, end_date}{Dates when the boundary came into and
+#'       went out of use (WHO only; `NA` for other sources)}
 #'     \item{source}{The provider the boundaries came from}
 #'     \item{geometry}{Boundary polygons}
 #'   }
@@ -95,7 +101,7 @@ get_boundaries <- function(
   level <- .check_level(adm_level, source)
 
   if (source == "who") {
-    dest_path <- if (isTRUE(cache)) file.path(cache_dir, "who") else NULL
+    dest_path <- if (isTRUE(cache)) cache_dir else NULL
     out <- .get_boundaries_who(
       country,
       admin_level = paste0("ADM", level),
@@ -106,7 +112,7 @@ get_boundaries <- function(
   }
 
   download_dir <- if (isTRUE(cache)) {
-    file.path(cache_dir, source)
+    cache_dir
   } else {
     tempfile("mipR_boundaries_")
   }
@@ -257,29 +263,42 @@ list_boundaries <- function(
   dest
 }
 
-# unzip an archive once into a folder named after it, and list its .shp files
+# list the .shp files inside a zip as GDAL /vsizip/ paths, so they are read
+# from the archive without unzipping
 #' @noRd
-.unzip_shapefiles <- function(zip_path) {
-  exdir <- sub("\\.zip$", "", zip_path)
-  if (!dir.exists(exdir)) {
-    utils::unzip(zip_path, exdir = exdir)
-  }
-  list.files(exdir, pattern = "\\.shp$", recursive = TRUE, full.names = TRUE)
+.zip_shapefiles <- function(zip_path) {
+  entries <- utils::unzip(zip_path, list = TRUE)$Name
+  shp <- entries[grepl("\\.shp$", entries, ignore.case = TRUE)]
+  zip_abs <- normalizePath(zip_path, winslash = "/", mustWork = TRUE)
+  file.path("/vsizip", zip_abs, shp, fsep = "/")
 }
 
 #' @noRd
 .standardise_boundaries <- function(x, level, source) {
-  core <- c("adm0_code", "adm0")
+  core <- "adm0"
   for (l in seq_len(level)) {
     core <- c(core, paste0("adm", l), paste0("adm", l, "_code"))
   }
-  for (col in setdiff(core, names(x))) {
-    x[[col]] <- NA_character_
+  for (col in setdiff(c(core, "start_date", "end_date"), names(x))) {
+    x[[col]] <- NA
   }
+  x$start_date <- as.Date(x$start_date)
+  x$end_date <- as.Date(x$end_date)
   x$source <- source
 
-  dates <- intersect(c("start_date", "end_date"), names(x))
-  x <- x[, c(core, dates, "source")]
+  # codes come from the names of the unit and its parents, not the provider
+  path <- .normalise_name(x$adm0)
+  for (l in seq_len(level)) {
+    unit <- x[[paste0("adm", l)]]
+    path <- paste(path, .normalise_name(unit), sep = "|")
+    x[[paste0("adm", l, "_code")]] <- ifelse(
+      is.na(unit),
+      NA_character_,
+      substr(as.character(openssl::md5(path)), 1, 12)
+    )
+  }
+
+  x <- x[, c(core, "start_date", "end_date", "source")]
   if (attr(x, "sf_column") != "geometry") {
     sf::st_geometry(x) <- "geometry"
   }
@@ -287,6 +306,14 @@ list_boundaries <- function(
     x <- sf::st_transform(x, 4326)
   }
   x
+}
+
+# internal helper: lower case with single spaces, so codes do not depend on
+# case or spacing; NA becomes an empty string
+#' @noRd
+.normalise_name <- function(x) {
+  x <- tolower(trimws(gsub("\\s+", " ", as.character(x))))
+  ifelse(is.na(x), "", x)
 }
 
 # OCHA COD-AB ------------------------------------------------------------------
@@ -344,10 +371,10 @@ list_boundaries <- function(
   stamp <- gsub("-", "", .first_date(resource$last_modified))
   zip_path <- file.path(
     download_dir,
-    paste0(tolower(iso3), "_cod_ab_", stamp, ".shp.zip")
+    paste0(tolower(iso3), "_cod_ab_", stamp, "_ocha.zip")
   )
   .download_file(resource$url, zip_path, quiet)
-  shp_files <- .unzip_shapefiles(zip_path)
+  shp_files <- .zip_shapefiles(zip_path)
 
   # current layout is {iso3}_admin{level}.shp; older releases use names
   # such as {iso3}_admbnda_adm{level}_{source}.shp
@@ -443,7 +470,7 @@ list_boundaries <- function(
 
   geojson_path <- file.path(
     download_dir,
-    paste0(meta$boundaryID, ".geojson")
+    paste0(tolower(meta$boundaryID), "_geoboundaries.geojson")
   )
   .download_file(meta$gjDownloadURL, geojson_path, quiet)
   x <- sf::st_read(geojson_path, quiet = TRUE)
@@ -495,9 +522,12 @@ gadm_licence <- paste0(
   url <- sprintf(
     "https://geodata.ucdavis.edu/gadm/gadm4.1/shp/gadm41_%s_shp.zip", iso3
   )
-  zip_path <- file.path(download_dir, basename(url))
+  zip_path <- file.path(
+    download_dir,
+    paste0(tolower(iso3), "_v41_gadm.zip")
+  )
   .download_file(url, zip_path, quiet)
-  shp_files <- .unzip_shapefiles(zip_path)
+  shp_files <- .zip_shapefiles(zip_path)
 
   target <- shp_files[
     basename(shp_files) == sprintf("gadm41_%s_%d.shp", iso3, level)
@@ -621,11 +651,11 @@ who_services <- c(
     # suffix when latest = TRUE
     countries_str <- tolower(paste(country_codes, collapse = "_"))
     admin_str <- tolower(admin_level)
-    file_stem <- paste0("who_shapefile_", countries_str, "_", admin_str)
+    file_stem <- paste0(countries_str, "_", admin_str)
     if (isTRUE(latest)) {
       file_stem <- paste0(file_stem, "_latest")
     }
-    dest_file <- file.path(dest_path, paste0(file_stem, ".gpkg"))
+    dest_file <- file.path(dest_path, paste0(file_stem, "_who.gpkg"))
 
     if (file.exists(dest_file)) {
       existing_sf <- sf::st_read(dest_file, quiet = TRUE)

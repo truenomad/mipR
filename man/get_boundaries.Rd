@@ -38,14 +38,17 @@ summary of what was retrieved is always shown.}
 \value{
 An \code{sf} object in EPSG:4326 with the columns:
 \describe{
-\item{adm0_code}{ISO3 country code}
 \item{adm0}{Country name}
-\item{adm1, adm2, ...}{Unit names for each level up to \code{level}}
-\item{adm1_code, adm2_code, ...}{Unit codes for each level up to
-\code{level} (OCHA P-codes, GADM GIDs or geoBoundaries shape IDs; \code{NA}
-for WHO)}
-\item{start_date, end_date}{WHO only: dates when the boundary came
-into and went out of use}
+\item{adm1, adm2, ...}{Unit names for each level up to \code{adm_level}}
+\item{adm1_code, adm2_code, ...}{Codes made from the unit's name and
+the names of its parents: \code{adm1_code} from \code{adm0} and \code{adm1},
+\code{adm2_code} from \code{adm0}, \code{adm1} and \code{adm2}, and so on. Each is the
+first 12 characters of the MD5 hash of the names, lower-cased and
+joined with \code{|}, so the same unit gets the same code from every
+source that spells its names the same way. \code{NA} when the unit name
+is missing}
+\item{start_date, end_date}{Dates when the boundary came into and
+went out of use (WHO only; \code{NA} for other sources)}
 \item{source}{The provider the boundaries came from}
 \item{geometry}{Boundary polygons}
 }
@@ -68,8 +71,7 @@ The sources are:
 \itemize{
 \item \code{"ocha"}: OCHA COD-AB from the Humanitarian Data Exchange (HDX). The
 dataset is resolved through the HDX API, so the most recent published
-version is used. Place codes (P-codes) are returned in the \verb{*_code}
-columns.
+version is used.
 \item \code{"geoboundaries"}: geoBoundaries gbOpen release. Only the requested
 level is published in each file, so the names of parent units are \code{NA}.
 \item \code{"gadm"}: GADM version 4.1. GADM data are free for academic and other
@@ -80,9 +82,13 @@ returns historical boundaries as well as current ones.
 }
 
 When \code{cache = TRUE}, downloaded files are kept in \code{cache_dir} and reused.
-OCHA and geoBoundaries files are named by dataset version, so a new
-release is downloaded automatically. Set \code{cache = FALSE} to download into a
-temporary directory instead.
+Each download is a single file in \code{cache_dir}, with no subfolders, and
+the source is the last part of the filename: for example
+\code{nga_cod_ab_20190417_ocha.zip}, \code{nga-adm2-..._geoboundaries.geojson},
+\code{nga_v41_gadm.zip} and \code{nga_adm2_latest_who.gpkg}. Shapefiles are read
+directly from the zip archives. OCHA and geoBoundaries files are named by
+dataset version, so a new release is downloaded automatically. Set
+\code{cache = FALSE} to download into a temporary directory instead.
 }
 \examples{
 \dontrun{
