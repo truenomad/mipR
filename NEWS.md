@@ -97,3 +97,6 @@
     Both take a palette from `get_palette()` / `list_palettes()` and can
     save to a file. `save_plot()` and `compress_png()` save and compress
     figures.
+* Added `plot_cohort_journey()` to follow one birth cohort over time in
+  areas picked at percentiles of its susceptible share, with arrows for
+  routine doses and the campaigns that reached it.

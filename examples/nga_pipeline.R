@@ -242,6 +242,16 @@ mipR::plot_cohort_protection(
   width = 9, height = 6
 )
 
+# the cohort born in October 2019, in states from the 10th to the 90th
+# percentile of its susceptible share in mid-2025
+mipR::plot_cohort_journey(
+  immunity,
+  birth = "2019-10",
+  at = "2025-06",
+  label = "adm1",
+  output_file = here::here("03_outputs/plots/nga_cohort_journey.png")
+)
+
 mipR::map_immunity(
   summary_2025, shp,
   type = "bins",

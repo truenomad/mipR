@@ -114,3 +114,30 @@ testthat::test_that("save_plot writes and compresses a PNG", {
   save_plot(p, path, width = 4, height = 3, dpi = 100)
   testthat::expect_lt(file.size(path), uncompressed)
 })
+
+testthat::test_that("plot_cohort_journey stacks states and marks doses", {
+  testthat::skip_if_not_installed("ggplot2")
+  immunity <- plot_fixture()
+  p <- plot_cohort_journey(
+    immunity, birth = "2023-03", at = "2025-06", percentiles = 0.5
+  )
+
+  testthat::expect_s3_class(p, "ggplot")
+  area <- p$layers[[1]]$data
+  totals <- dplyr::summarise(area, share = sum(.data$share), .by = "month")
+  testthat::expect_equal(totals$share, rep(1, nrow(totals)))
+  testthat::expect_true("MCV1" %in% p$layers[[3]]$data$label)
+  testthat::expect_match(
+    levels(area$panel), "^Kano \u00b7 50th percentile \\(\\d+%\\)$"
+  )
+  testthat::expect_error(
+    plot_cohort_journey(immunity, birth = "2023-03", at = "2023-01")
+  )
+})
+
+testthat::test_that(".label_rows stacks overlapping labels", {
+  dates <- as.Date(c("2024-01-15", "2024-02-15", "2026-01-15"))
+  rows <- .label_rows(dates, c("Jan 2024", "Feb 2024", "Jan 2026"))
+
+  testthat::expect_identical(rows, c(1L, 2L, 1L))
+})

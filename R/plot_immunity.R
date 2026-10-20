@@ -545,6 +545,324 @@ plot_cohort_protection <- function(
   )
 }
 
+# cohort journeys --------------------------------------------------------------
+
+# colours of the immunity states in cohort journeys
+.journey_colours <- c(
+  "Susceptible" = "#3E78B2", "Vaccination immune" = "#E08A2E"
+)
+
+#' Plot One Birth Cohort Over Time Across Areas
+#'
+#' Follows one monthly birth cohort from birth to an evaluation month, in
+#' areas picked at percentiles of its susceptible share, as stacked areas
+#' of the susceptible and vaccination-immune shares. Arrows mark the
+#' routine doses and the campaigns that reached the cohort.
+#'
+#' @details
+#' Areas are ranked by the cohort's susceptible share in `at`. For each
+#' percentile, the area closest to that percentile of the shares is drawn,
+#' and the panel title gives its name, the percentile and its susceptible
+#' share. Panels run from the lowest to the highest susceptible share.
+#'
+#' Routine doses are always marked. A campaign is marked when it reached at
+#' least `min_reach` of the cohort in that area. Campaigns within
+#' `merge_days` of each other share one label, and labels that would
+#' overlap are stacked.
+#'
+#' @param immunity The output of [estimate_immunity()].
+#' @param birth Birth month of the cohort, as a Date or `"YYYY-MM"`.
+#' @param at Evaluation month, as a Date or `"YYYY-MM"`. The plot ends here
+#'   and areas are ranked here.
+#' @param percentiles Percentiles of the susceptible share at which areas
+#'   are picked. Default `seq(0.1, 0.9, by = 0.1)`.
+#' @param min_reach Smallest share of the cohort a campaign must reach to be
+#'   marked. Default `0.25`.
+#' @param label Geography column used to name the areas. Default: the last
+#'   geography column, such as `adm1_code`.
+#' @param merge_days Campaigns closer than this many days share one label.
+#'   Default `75`.
+#' @param ncol Number of panels per row. Default `3`.
+#' @param title,subtitle,caption Plot text. The default caption gives the
+#'   cohort's age in `at` and the arrow rule.
+#' @param output_file Optional file path to save the plot to. Default
+#'   `NULL`, not saved.
+#' @param width,height Size of the saved plot in inches.
+#' @param dpi Resolution of the saved plot. Default `300`.
+#' @param scale Scaling factor for the saved plot. Default `1`.
+#' @param title_size,subtitle_size,legend_title_size Text sizes in points.
+#' @param compress_image Logical. Compress a saved PNG with pngquant.
+#'   Default `TRUE`.
+#'
+#' @return A ggplot object, saved to `output_file` when given.
+#'
+#' @examples
+#' \dontrun{
+#' plot_cohort_journey(immunity, birth = "2019-10", at = "2025-06",
+#'                     label = "adm1")
+#' }
+#' @export
+plot_cohort_journey <- function(
+  immunity,
+  birth,
+  at,
+  percentiles = seq(0.1, 0.9, by = 0.1),
+  min_reach = 0.25,
+  label = NULL,
+  merge_days = 75,
+  ncol = 3,
+  title = NULL,
+  subtitle = NULL,
+  caption = NULL,
+  output_file = NULL,
+  width = 12.4,
+  height = 5.6,
+  dpi = 300,
+  scale = 1,
+  title_size = 14,
+  subtitle_size = 11,
+  legend_title_size = 10,
+  compress_image = TRUE
+) {
+  .check_plot_packages("ggplot2")
+  if (!is.list(immunity) ||
+        !all(c("immunity", "contributions") %in% names(immunity))) {
+    cli::cli_abort(
+      "{.arg immunity} must be the output of {.fn estimate_immunity}."
+    )
+  }
+  if (!is.numeric(percentiles) || length(percentiles) == 0 ||
+        any(percentiles < 0 | percentiles > 1)) {
+    cli::cli_abort("{.arg percentiles} must be between 0 and 1.")
+  }
+  birth_month <- .month_from_index(.month_index(.as_date(birth, "birth")))
+  at_month <- .month_from_index(.month_index(.as_date(at, "at")))
+  if (at_month <= birth_month) {
+    cli::cli_abort("{.arg at} must be after {.arg birth}.")
+  }
+  geography <- setdiff(
+    names(immunity$contributions),
+    c("birth_month", "event_id", "type", "month", "reached",
+      "newly_protected")
+  )
+  if (is.null(label)) {
+    label <- geography[length(geography)]
+  }
+  if (!label %in% geography) {
+    cli::cli_abort(
+      "{.arg label} must be one of the geography columns: {.val {geography}}."
+    )
+  }
+
+  cohort <- immunity$immunity |>
+    dplyr::filter(
+      .data$birth_month == .env$birth_month,
+      .data$month >= .env$birth_month, .data$month <= at_month
+    ) |>
+    dplyr::select(dplyr::all_of(geography), "month", "susceptible_share")
+  ranking <- dplyr::filter(cohort, .data$month == at_month)
+  if (nrow(ranking) == 0) {
+    cli::cli_abort(
+      "No cohort born in {.val {format(birth_month, '%Y-%m')}} on
+      {.val {format(at_month, '%Y-%m')}}."
+    )
+  }
+
+  # the area nearest each percentile of the susceptible share
+  picked <- purrr::map(percentiles, \(q) {
+    target <- stats::quantile(ranking$susceptible_share, q, names = FALSE)
+    ranking |>
+      dplyr::slice_min(
+        abs(.data$susceptible_share - target), n = 1, with_ties = FALSE
+      ) |>
+      dplyr::mutate(percentile = q)
+  }) |>
+    purrr::list_rbind() |>
+    dplyr::arrange(.data$susceptible_share, .data$percentile) |>
+    dplyr::mutate(
+      panel = paste0(
+        .data[[label]], " \u00b7 ", .ordinal(round(100 * .data$percentile)),
+        " percentile (", round(100 * .data$susceptible_share), "%)"
+      ),
+      panel = factor(.data$panel, unique(.data$panel))
+    ) |>
+    dplyr::select(dplyr::all_of(geography), "panel")
+
+  states <- names(.journey_colours)
+  area <- cohort |>
+    dplyr::inner_join(picked, by = geography, relationship = "many-to-many") |>
+    dplyr::transmute(
+      .data$panel, .data$month,
+      Susceptible = .data$susceptible_share,
+      `Vaccination immune` = 1 - .data$susceptible_share
+    ) |>
+    tidyr::pivot_longer(
+      dplyr::all_of(states), names_to = "state", values_to = "share"
+    ) |>
+    dplyr::mutate(state = factor(.data$state, rev(states)))
+
+  # routine doses, and campaigns that reached enough of the cohort
+  events <- immunity$contributions |>
+    dplyr::filter(
+      .data$birth_month == .env$birth_month, .data$month <= at_month,
+      .data$reached > 0,
+      .data$type != "sia" | .data$reached >= min_reach
+    ) |>
+    dplyr::inner_join(picked, by = geography, relationship = "many-to-many") |>
+    dplyr::summarise(
+      month = min(.data$month), .by = c("panel", "event_id", "type")
+    )
+  tags <- .journey_tags(events, merge_days)
+  top <- max(1.62, max(c(tags$y, 0)) + 0.16)
+
+  if (is.null(caption)) {
+    caption <- paste0(
+      "Born ", format(birth_month, "%b %Y"), ", age ",
+      .age_months_text(birth_month, at_month), " in ",
+      format(at_month, "%b %Y"), ". Vaccination-derived immunity only.\n",
+      "Arrows: routine doses and campaigns reaching at least ",
+      round(100 * min_reach), "% of the cohort."
+    )
+  }
+
+  plot <- ggplot2::ggplot() +
+    ggplot2::geom_area(
+      data = area,
+      ggplot2::aes(.data$month, .data$share, fill = .data$state),
+      position = "stack"
+    ) +
+    ggplot2::geom_segment(
+      data = events,
+      ggplot2::aes(
+        x = .data$month, xend = .data$month, y = 1.28, yend = 1.08
+      ),
+      colour = "grey50", linewidth = 0.3,
+      arrow = grid::arrow(length = grid::unit(1.1, "mm"), type = "closed")
+    ) +
+    ggplot2::geom_text(
+      data = tags,
+      ggplot2::aes(.data$month, .data$y, label = .data$label),
+      size = 2.3, colour = "grey40", vjust = 0
+    ) +
+    ggplot2::facet_wrap(ggplot2::vars(.data$panel), ncol = ncol) +
+    ggplot2::scale_fill_manual(
+      values = .journey_colours, breaks = states, name = NULL
+    ) +
+    ggplot2::scale_x_date(
+      limits = c(birth_month, at_month), date_breaks = "1 year",
+      date_labels = "%Y", expand = ggplot2::expansion(mult = c(0.01, 0.02))
+    ) +
+    ggplot2::scale_y_continuous(breaks = NULL, expand = c(0, 0)) +
+    ggplot2::coord_cartesian(ylim = c(0, top), clip = "off") +
+    ggplot2::labs(
+      x = NULL, y = "Share of cohort (0-100%)", title = title,
+      subtitle = subtitle, caption = caption
+    ) +
+    .theme_mipr(title_size, subtitle_size, legend_title_size) +
+    ggplot2::theme(
+      strip.text = ggplot2::element_text(face = "bold", hjust = 0),
+      panel.spacing.x = grid::unit(2, "lines"),
+      panel.spacing.y = grid::unit(1.2, "lines"),
+      panel.border = ggplot2::element_rect(
+        colour = "black", fill = NA, linewidth = 0.43
+      ),
+      legend.position = "top",
+      legend.justification = "left",
+      legend.key.height = grid::unit(3, "mm"),
+      legend.key.width = grid::unit(6, "mm")
+    )
+
+  if (!is.null(output_file)) {
+    save_plot(
+      plot, output_file,
+      width = width, height = height, dpi = dpi, scale = scale,
+      compress = compress_image
+    )
+  }
+  plot
+}
+
+# internal helper: arrow labels for each panel, with nearby campaigns merged
+# into one label and overlapping labels stacked in rows
+#' @noRd
+.journey_tags <- function(events, merge_days) {
+  if (nrow(events) == 0) {
+    return(dplyr::tibble(
+      panel = events$panel, month = as.Date(character()),
+      label = character(), y = numeric()
+    ))
+  }
+  events |>
+    dplyr::mutate(routine = .data$type != "sia") |>
+    dplyr::arrange(.data$panel, .data$month) |>
+    dplyr::mutate(
+      gap = as.numeric(.data$month - dplyr::lag(.data$month)),
+      group = cumsum(
+        .data$routine | is.na(.data$gap) | .data$gap > merge_days
+      ),
+      .by = "panel"
+    ) |>
+    dplyr::summarise(
+      label = dplyr::case_when(
+        dplyr::first(.data$type) != "sia" ~
+          toupper(dplyr::first(.data$type)),
+        dplyr::n() == 1 ~ format(dplyr::first(.data$month), "%b %Y"),
+        format(min(.data$month), "%Y") == format(max(.data$month), "%Y") ~
+          paste0(
+            format(min(.data$month), "%b"), "-",
+            format(max(.data$month), "%b %Y")
+          ),
+        .default = paste0(
+          format(min(.data$month), "%b %Y"), "-",
+          format(max(.data$month), "%b %Y")
+        )
+      ),
+      month = min(.data$month) + (max(.data$month) - min(.data$month)) / 2,
+      .by = c("panel", "group")
+    ) |>
+    dplyr::arrange(.data$panel, .data$month) |>
+    dplyr::mutate(row = .label_rows(.data$month, .data$label), .by = "panel") |>
+    dplyr::mutate(y = 1.31 + 0.12 * (.data$row - 1)) |>
+    dplyr::select("panel", "month", "label", "y")
+}
+
+# internal helper: the lowest row where each label clears the labels already
+# placed, with label widths approximated in days per character
+#' @noRd
+.label_rows <- function(date, label, days_per_char = 38, gap_days = 60) {
+  half <- days_per_char * nchar(label) / 2
+  placed <- purrr::reduce2(
+    as.numeric(date) - half, as.numeric(date) + half,
+    \(acc, lo, hi) {
+      free <- which(acc$ends + gap_days < lo)
+      row <- if (length(free) > 0) min(free) else length(acc$ends) + 1L
+      list(ends = replace(acc$ends, row, hi), rows = c(acc$rows, row))
+    },
+    .init = list(ends = numeric(), rows = integer())
+  )
+  placed$rows
+}
+
+# internal helper: an ordinal number, such as 10th or 22nd
+#' @noRd
+.ordinal <- function(x) {
+  suffix <- dplyr::case_when(
+    x %% 100 %in% 11:13 ~ "th",
+    x %% 10 == 1 ~ "st",
+    x %% 10 == 2 ~ "nd",
+    x %% 10 == 3 ~ "rd",
+    .default = "th"
+  )
+  paste0(x, suffix)
+}
+
+# internal helper: age in years and months, such as 5y 8m
+#' @noRd
+.age_months_text <- function(birth, at) {
+  months <- .month_index(at) - .month_index(birth)
+  paste0(months %/% 12, "y ", months %% 12, "m")
+}
+
 # maps -------------------------------------------------------------------------
 
 #' Map the Susceptible Share by Area
