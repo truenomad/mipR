@@ -7,65 +7,71 @@
 **Spatiotemporal Measles Population Immunity Profiling**
 
 `mipR` is an R package for reconstructing and projecting measles population
-immunity across birth cohorts, geographical areas and calendar months.
+immunity by birth cohort, geographical area and calendar month.
 
-It integrates historical routine immunisation coverage, supplementary
-immunisation activities (SIAs) and vaccine effectiveness assumptions to
-estimate how population immunity and susceptibility change over time.
+It combines historical routine vaccination coverage, supplementary
+immunisation activities (SIAs), population estimates and vaccine
+effectiveness to estimate vaccination-derived immunity and susceptibility
+over time.
 
-The package is for subnational assessment of immunity gaps and for
-vaccination campaign planning.
+The package supports subnational assessments of immunity gaps and planning
+of measles vaccination campaigns.
 
 ## Why mipR?
 
-Measles outbreaks occur when sufficient numbers of susceptible individuals
-accumulate in a population. Understanding this risk requires more than
-current vaccination coverage.
+Current vaccination coverage does not describe the immunity of an entire
+population. Immunity depends on the vaccination opportunities available to
+each birth cohort, the proportion vaccinated and vaccine effectiveness.
 
-Vaccination coverage describes the proportion of a target population
-receiving a vaccine during a given period. Population immunity reflects the
-cumulative effects of historical vaccination opportunities, vaccine
-effectiveness, infection-acquired immunity and demographic changes.
+These factors vary by age, geographical area and calendar period.
+Reconstructing historical vaccination opportunities helps identify where
+susceptible populations have accumulated.
 
-These processes vary across birth cohorts and geographical areas.
+`mipR` allows analysts to examine:
 
-`mipR` reconstructs vaccination histories at monthly resolution, so analysts
-can examine:
-
-- which geographical areas have the largest immunity gaps
-- which birth cohorts and age groups remain susceptible
-- how susceptibility accumulates over time
-- how alternative vaccination strategies would change immunity, by running
-  the immunity steps again with different campaign or coverage inputs
+- geographical differences in vaccination-derived susceptibility
+- immunity gaps across birth cohorts and age groups
+- changes in susceptibility over time
+- the effects of alternative routine coverage and campaign assumptions on
+  estimated immunity
 
 ## What mipR does
 
 | Component | Functions |
 |---|---|
-| **Data acquisition** | `get_boundaries()`, `list_boundaries()` (OCHA, geoBoundaries, GADM, WHO); `get_worldpop()`, `get_worldpop_single_age()`; `get_ihme_mcv()`, `read_ihme_mcv_admin()`; `get_demog_wpp()` (UN WPP 2024 rates, age structure and mortality) |
-| **Spatial extraction** | `extract_raster()`, with population weighting and year matching for raster stacks |
-| **Population reconstruction** | `reconstruct_birth_cohorts()`, monthly birth cohorts calibrated to annual population estimates |
-| **Campaigns** | `prepare_campaigns()`, standard campaign records, survey indicators and diagnostics |
-| **Immunity estimation** | `build_vaccination_history()`, `estimate_immunity()`, `ve_cdc()`, `summarise_immunity()` |
-| **Checks and uncertainty** | `check_immunity()` against post-campaign surveys; `immunity_draws()` from coverage bounds |
-| **Visualisation** | `plot_cohort_journey()`, `plot_cohort_protection()`, `map_immunity()`, `get_palette()`, `save_plot()` |
+| **Population, vaccination and boundary data** | `get_boundaries()`, `list_boundaries()` (OCHA, geoBoundaries, GADM, WHO); `get_worldpop()`, `get_worldpop_single_age()`; `get_ihme_mcv()`, `read_ihme_mcv_admin()`; `get_demog_wpp()` (UN WPP 2024 rates, age structure and mortality) |
+| **Population-weighted raster extraction** | `extract_raster()`, with population weighting and year matching for raster stacks |
+| **Monthly birth cohort reconstruction** | `reconstruct_birth_cohorts()`, monthly birth cohorts calibrated to annual population estimates |
+| **Campaign data preparation** | `prepare_campaigns()`, standard campaign records, survey indicators and diagnostics |
+| **Vaccination histories and immunity estimation** | `build_vaccination_history()`, `estimate_immunity()`, `ve_cdc()`, `summarise_immunity()` |
+| **Survey comparisons and uncertainty** | `check_immunity()` against post-campaign surveys; `immunity_draws()` from coverage bounds |
+| **Cohort plots and immunity maps** | `plot_cohort_journey()`, `plot_cohort_protection()`, `map_immunity()`, `get_palette()`, `save_plot()` |
 
-Still planned: infection-acquired immunity and helpers for comparing
-vaccination scenarios. Scenarios can already be run by changing the
-campaign or coverage inputs and running the immunity steps again.
+Infection-acquired immunity and dedicated scenario-comparison functions are
+planned. Alternative vaccination scenarios can currently be evaluated by
+changing routine coverage or campaign inputs and rerunning the immunity
+calculations.
 
-A worked example for Nigeria at state level is in
-[`examples/nga_pipeline.R`](examples/nga_pipeline.R), with the campaign
-inputs prepared in
-[`examples/nga_campaign_data.R`](examples/nga_campaign_data.R).
+A worked state-level example for Nigeria is provided in
+[`examples/nga_pipeline.R`](examples/nga_pipeline.R). Campaign inputs are
+prepared in [`examples/nga_campaign_data.R`](examples/nga_campaign_data.R).
 
 ## Example: Nigeria
 
-The main steps of the Nigeria example are shown below. `aged_pop_admin`
-is the WorldPop population by state and single year of age from
-`extract_raster()`, `routine_coverage` holds the IHME MCV1 and MCV2
-coverage by state and year and `campaigns` comes from
-`prepare_campaigns()`.
+The Nigeria example reconstructs monthly birth cohorts, applies routine and
+campaign vaccination histories, and estimates vaccination-derived immunity at
+state level.
+
+The code below is an excerpt from that script. It uses four prepared inputs:
+
+- `aged_pop_admin`: state-level population by single year of age, extracted
+  from WorldPop
+- `routine_coverage`: annual IHME MCV1 and MCV2 coverage estimates by state
+- `campaigns`: campaign records prepared using `prepare_campaigns()`
+- `schedule`: the national routine schedule, with the age at each dose
+
+The complete workflow is available in
+[`examples/nga_pipeline.R`](examples/nga_pipeline.R).
 
 ```r
 shp <- mipR::get_boundaries(country = "NGA", adm_level = 1, source = "who")
@@ -102,16 +108,16 @@ mipR::plot_cohort_journey(
 )
 ```
 
-`map_immunity()` maps the share of children susceptible by state and age
-band.
+`plot_cohort_journey()` shows how immunity changes from birth for a
+selected cohort. States are selected across percentiles of susceptibility,
+with routine vaccination and campaign opportunities marked along the
+timeline.
 
-<img src="man/figures/nga_susceptible_map.png" alt="Share of children susceptible to measles by Nigerian state and age band, June 2025" width="100%" />
+<img src="man/figures/nga_cohort_journey.png" alt="Vaccination-derived immunity and susceptibility for the October 2019 birth cohort across nine Nigerian states" width="100%" />
 
-`plot_cohort_journey()` follows one birth cohort from birth, in states
-picked at percentiles of its susceptible share, with arrows for the
-routine doses and the campaigns that reached it.
+`map_immunity()` displays estimated susceptibility by state and age group.
 
-<img src="man/figures/nga_cohort_journey.png" alt="Susceptible and vaccination-immune shares of the cohort born in October 2019, in nine Nigerian states from the 10th to the 90th percentile of susceptibility" width="100%" />
+<img src="man/figures/nga_susceptible_map.png" alt="Estimated vaccination-derived susceptibility by state and age group, Nigeria, June 2025" width="100%" />
 
 These figures use population from 2010 onwards and include
 vaccination-derived immunity only.
@@ -120,14 +126,22 @@ vaccination-derived immunity only.
 
 ### The CDC immunity profile method
 
-`mipR` follows the measles population immunity profile method of Li,
-Goodson and Perry (2024). For one birth cohort, Figure 1 of that paper
-builds the immune share $`I`$ dose by dose. With MCV1 coverage $`C_1`$ and
-effectiveness $`E_1`$, and MCV2 coverage $`C_2`$ and effectiveness $`E_2`$:
+`mipR` implements the vaccination-based population immunity profiling
+method described by Li, Goodson and Perry (2024).
+
+The method estimates immunity for each birth cohort by applying routine
+vaccination and campaign coverage sequentially, accounting for vaccine
+effectiveness and previous vaccination.
+
+For MCV1 coverage $`C_1`$ and effectiveness $`E_1`$, the immune proportion
+after the first dose is:
 
 ```math
 I_1 = C_1 E_1
 ```
+
+With MCV2 coverage $`C_2`$ and effectiveness $`E_2`$, the immune proportion
+after the second dose is:
 
 ```math
 I_2 =
@@ -137,9 +151,9 @@ I_1 + (C_1 - I_1)\,E_2 + (C_2 - C_1)\,E_2 & \text{if } C_2 \ge C_1
 \end{cases}
 ```
 
-The share ever vaccinated is $`V = \max(C_1, C_2)`$. Each campaign $`k`$ that
-targets the cohort, with coverage $`S_k`$ and effectiveness $`E_k`$, then
-updates the immune share:
+The proportion receiving at least one dose is $`V = \max(C_1, C_2)`$. For
+each subsequent campaign $`k`$, with coverage $`S_k`$ and effectiveness
+$`E_k`$, immunity is updated as follows:
 
 ```math
 I \leftarrow
@@ -149,20 +163,30 @@ I + (S_k - I)\,E_k, \quad V \leftarrow S_k & \text{if } S_k \ge V
 \end{cases}
 ```
 
-and the susceptible share is $`1 - I`$. The method assumes a campaign
-reaches children who were already vaccinated before children with no dose.
-Effectiveness depends on the dose type and the age at the dose: for MCV1
-and campaign doses it is 0.58 below 9 months, 0.84 at 9 to 11 months and
-0.925 (MCV1) or 0.95 (campaigns) from 12 months; MCV2 is 0.95 (`ve_cdc()`).
+The susceptible proportion is $`1 - I`$.
 
-### Extending it in space and time
+The default dependent vaccination assumption prioritises previously
+vaccinated children over those who have received no doses. This is the
+assumption of the original method. `estimate_immunity()` also supports
+independent and complementary allocation through its `coupling` argument.
 
-`mipR` applies the same arithmetic to every geography and every monthly
-birth cohort, and reports it for every calendar month.
+Vaccine effectiveness varies by dose and age at vaccination. The values
+implemented in `ve_cdc()` are:
 
-**Indices.** $`g`$ is a geography, $`c`$ a monthly birth cohort covering the
+- MCV1 and campaign doses below 9 months: 0.58
+- MCV1 and campaign doses at 9–11 months: 0.84
+- From 12 months: 0.925 for MCV1 and 0.95 for campaign doses
+- MCV2: 0.95
+
+### Spatiotemporal implementation
+
+`mipR` extends the cohort-based vaccination calculations across geographical
+areas and monthly birth cohorts. Immunity and susceptibility are estimated
+for each calendar month.
+
+**Notation.** $`g`$ is a geography, $`c`$ a monthly birth cohort covering the
 birth dates $`[b_c, b_{c+1})`$, $`t`$ a calendar month and $`k`$ a vaccination
-opportunity. Monthly values refer to the 15th of the month.
+opportunity. Monthly estimates are referenced to the 15th day of each month.
 
 **Population.** The population of cohort $`c`$ in geography $`g`$ and month
 $`t`$ is
@@ -174,9 +198,10 @@ N_{g,c,t} = B_{g,c}\,\ell_c(t)
 where $`B_{g,c}`$ is the number of births and $`\ell_c(t)`$ the share surviving
 to month $`t`$, from UN WPP single-age mortality.
 `reconstruct_birth_cohorts()` estimates $`B_{g,c}`$ from annual population
-estimates $`P_{g,a,y}`$ (for example WorldPop) by single year of age $`a`$:
-each estimate is shared across the birth months it covers and divided by
-survival, and the births are fitted so that
+estimates $`P_{g,a,y}`$ (for example WorldPop) by single year of age $`a`$.
+Annual age-specific population estimates are allocated across the
+corresponding birth months and adjusted for survival. The births are fitted
+so that
 
 ```math
 \sum_{c \in C(a,y)} B_{g,c}\,\ell_c(t_y)\,w_{c,a,y} \approx P_{g,a,y}
@@ -184,13 +209,13 @@ survival, and the births are fitted so that
 
 within a tolerance, where $`C(a,y)`$ are the cohorts aged $`a`$ on the
 reference date $`t_y`$ and $`w_{c,a,y}`$ is the share of cohort $`c`$ inside
-that age. Estimates that disagree with the rest are down-weighted rather than
-forced, and the remaining differences are reported.
+that age. Inconsistent population estimates receive lower weights during
+fitting. Remaining differences are reported.
 
-**Eligibility.** Births are spread evenly over the days of the birth month.
-The share of cohort $`c`$ eligible for opportunity $`k`$ is the share of its
-birth dates $`d`$ whose age is in the target range at some time during the
-opportunity:
+**Eligibility.** Births are assumed to be uniformly distributed across days
+within each month. The share of cohort $`c`$ eligible for opportunity $`k`$
+is the share of its birth dates $`d`$ whose age is in the target range at
+some time during the opportunity:
 
 ```math
 e_{c,k} = \frac{1}{|D_c|} \sum_{d \in D_c}
@@ -202,7 +227,8 @@ so a cohort born in January becomes eligible for MCV1 at 9 months over the
 days of October, and a campaign reaches only the part of a cohort inside
 its target ages.
 
-**Coverage.** The share of the cohort reached by opportunity $`k`$ is
+**Coverage.** Estimated coverage for each cohort and vaccination opportunity
+$`k`$ is
 
 ```math
 r_{g,c,k} = \text{coverage}_{g,k} \times e_{c,k}
@@ -212,11 +238,13 @@ with routine coverage for the calendar year of the dose (IHME, by
 geography) and campaign coverage from post-campaign surveys, or coverage
 reported by the campaign where no survey exists.
 
-**State.** Each cohort is split into shares $`\pi_{g,c}(s)`$ by state
+**State.** Each cohort is represented by proportions $`\pi_{g,c}(s)`$ in
+vaccination and protection states
 $`s = (\text{doses}, \text{MCV1 received}, \text{protected})`$. An
-opportunity reaches $`r_{g,c,k}`$ of the cohort, filling groups of states in
-order: MCV2 reaches MCV1 recipients first; with the dependent rule (the
-CDC default) children with any dose are reached before children with none.
+opportunity reaches $`r_{g,c,k}`$ of the cohort, with allocation determined
+by the specified vaccination-dependence assumption: MCV2 reaches MCV1
+recipients first; with the dependent rule (the CDC default) children with
+any dose are reached before children with none.
 Reached children who are not protected become protected with probability
 $`E_k`$. With full eligibility and national coverage this reproduces the
 Figure 1 formulas above exactly.
@@ -237,14 +265,17 @@ U_{g,c,t} = N_{g,c,t} \sum_{s:\,\text{not protected}} \pi_{g,c}(s, t)
 ```
 
 and `summarise_immunity()` adds $`U_{g,c,t}`$ and $`N_{g,c,t}`$ over the
-cohorts in each age band. Infants younger than 6 months are treated as
-protected by maternal antibodies and left out of summaries. Immunity from
-infection is not yet included.
+cohorts in each age band. Infants younger than 6 months are flagged as
+protected by maternal antibodies and left out of summaries by default; their
+state proportions are not changed. Immunity from infection is not yet
+included.
 
-**Uncertainty.** `immunity_draws()` repeats the calculation with coverage
-drawn on the logit scale from its 95% interval (IHME bounds for routine
-coverage, survey intervals for campaigns), correlated across years and
-between MCV1 and MCV2.
+**Uncertainty.** `immunity_draws()` propagates uncertainty in routine and
+campaign coverage through repeated immunity calculations. Coverage is drawn
+on the logit scale from its 95% interval (IHME bounds for routine coverage,
+survey intervals for campaigns), correlated across years and between MCV1
+and MCV2. The intervals reflect uncertainty in coverage only, not in
+population estimates, vaccine effectiveness or model structure.
 
 ## Installation
 
@@ -258,21 +289,21 @@ pak::pak("truenomad/mipR")
 
 ## Development status
 
-`mipR` is in active development. The functions above work and are tested,
-but their interfaces may still change before the first release.
+`mipR` is under active development. The functions documented above are
+implemented and tested, but their interfaces may change before the first
+release.
 
 ## Reference
 
-The method is described in:
+`mipR` builds on the population immunity profiling method described by:
 
 Li X, Goodson JL, Perry RT. (2024). Measles Population Immunity Profiles:
 Updated Methods and Tools. *Vaccines*, 12(8), 937.
 
-https://doi.org/10.3390/vaccines12080937
+[https://doi.org/10.3390/vaccines12080937](https://doi.org/10.3390/vaccines12080937)
 
-`mipR` is an independently developed open-source package. It is not
-affiliated with or endorsed by the US Centers for Disease Control and
-Prevention.
+`mipR` is independently developed and is not affiliated with or endorsed by
+the US Centers for Disease Control and Prevention.
 
 ## Citation
 
