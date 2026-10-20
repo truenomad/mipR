@@ -119,19 +119,19 @@ get_boundaries <- function(
   }
   dir.create(download_dir, recursive = TRUE, showWarnings = FALSE)
 
-  get_one <- switch(
+  .get_one <- switch(
     source,
     ocha = .get_boundaries_ocha,
     geoboundaries = .get_boundaries_geoboundaries,
     gadm = .get_boundaries_gadm
   )
 
-  pieces <- lapply(country, function(iso3) {
-    out <- get_one(iso3, level, download_dir, quiet)
-    .standardise_boundaries(out, level, source)
-  })
-
-  do.call(rbind, pieces)
+  country |>
+    purrr::map(\(iso3) {
+      .get_one(iso3, level, download_dir, quiet) |>
+        .standardise_boundaries(level, source)
+    }) |>
+    purrr::list_rbind()
 }
 
 #' List Available Administrative Boundary Sources
@@ -181,28 +181,27 @@ list_boundaries <- function(
     who = .list_boundaries_who
   )
 
-  rows <- list()
-  for (iso3 in country) {
-    for (src in source) {
-      row <- tryCatch(
-        list_one[[src]](iso3),
-        error = function(e) list(available = FALSE)
-      )
-      available <- isTRUE(row$available)
-      rows[[length(rows) + 1]] <- data.frame(
-        country = iso3,
-        source = src,
-        available = available,
-        levels = if (available) .or_na(row$levels) else NA_character_,
-        version = if (available) .or_na(row$version) else NA_character_,
-        licence = .or_na(row$licence),
-        url = .or_na(row$url),
-        stringsAsFactors = FALSE
-      )
-    }
-  }
+  # one row per country and source, sources varying fastest
+  checks <- tidyr::expand_grid(iso3 = country, src = source)
 
-  do.call(rbind, rows)
+  purrr::map2(checks$iso3, checks$src, \(iso3, src) {
+    row <- tryCatch(
+      list_one[[src]](iso3),
+      error = function(e) list(available = FALSE)
+    )
+    available <- isTRUE(row$available)
+    dplyr::tibble(
+      country = iso3,
+      source = src,
+      available = available,
+      levels = if (available) .or_na(row$levels) else NA_character_,
+      version = if (available) .or_na(row$version) else NA_character_,
+      licence = .or_na(row$licence),
+      url = .or_na(row$url)
+    )
+  }) |>
+    purrr::list_rbind() |>
+    as.data.frame()
 }
 
 # input checks and shared helpers ---------------------------------------------
@@ -269,7 +268,7 @@ list_boundaries <- function(
 #' @noRd
 .zip_shapefiles <- function(zip_path) {
   entries <- utils::unzip(zip_path, list = TRUE)$Name
-  shp <- entries[grepl("\\.shp$", entries, ignore.case = TRUE)]
+  shp <- grep("\\.shp$", entries, ignore.case = TRUE, value = TRUE)
   zip_abs <- normalizePath(zip_path, winslash = "/", mustWork = TRUE)
   file.path("/vsizip", zip_abs, shp, fsep = "/")
 }
@@ -278,35 +277,46 @@ list_boundaries <- function(
 # keeps start_date and end_date, which only historical WHO boundaries need
 #' @noRd
 .standardise_boundaries <- function(x, level, source, dates = FALSE) {
-  core <- "adm0"
-  for (l in seq_len(level)) {
-    core <- c(core, paste0("adm", l), paste0("adm", l, "_code"))
-  }
+  unit_levels <- seq_len(level)
+  core <- c(
+    "adm0",
+    purrr::map(unit_levels, \(l) paste0("adm", l, c("", "_code"))) |>
+      purrr::list_c(ptype = character()),
+    if (dates) c("start_date", "end_date")
+  )
+
+  # add the missing standard columns as NA
+  missing_cols <- setdiff(core, names(x))
+  x <- dplyr::mutate(
+    x,
+    !!!stats::setNames(rep(list(NA), length(missing_cols)), missing_cols)
+  )
   if (dates) {
-    core <- c(core, "start_date", "end_date")
+    x <- dplyr::mutate(
+      x,
+      start_date = as.Date(.data$start_date),
+      end_date = as.Date(.data$end_date)
+    )
   }
-  for (col in setdiff(core, names(x))) {
-    x[[col]] <- NA
-  }
-  if (dates) {
-    x$start_date <- as.Date(x$start_date)
-    x$end_date <- as.Date(x$end_date)
-  }
-  x$source <- source
+  source_name <- source
+  x <- dplyr::mutate(x, source = source_name)
 
   # codes come from the names of the unit and its parents, not the provider
-  path <- .normalise_name(x$adm0)
-  for (l in seq_len(level)) {
-    unit <- x[[paste0("adm", l)]]
-    path <- paste(path, .normalise_name(unit), sep = "|")
-    x[[paste0("adm", l, "_code")]] <- ifelse(
-      is.na(unit),
+  code_levels <- stats::setNames(
+    unit_levels, sprintf("adm%d_code", unit_levels)
+  )
+  codes <- purrr::map(code_levels, \(l) {
+    path <- paste0("adm", 0:l) |>
+      purrr::map(\(col) .normalise_name(x[[col]])) |>
+      purrr::reduce(\(parent, unit) paste(parent, unit, sep = "|"))
+    dplyr::if_else(
+      is.na(x[[paste0("adm", l)]]),
       NA_character_,
       substr(as.character(openssl::md5(path)), 1, 12)
     )
-  }
-
-  x <- x[, c(core, "source")]
+  })
+  x <- dplyr::mutate(x, !!!codes) |>
+    dplyr::select(dplyr::all_of(c(core, "source")))
   if (attr(x, "sf_column") != "geometry") {
     sf::st_geometry(x) <- "geometry"
   }
@@ -363,9 +373,9 @@ list_boundaries <- function(
 .get_boundaries_ocha <- function(iso3, level, download_dir, quiet) {
   meta <- .hdx_cod_ab(iso3)
 
-  shp_resources <- Filter(
-    function(res) toupper(res$format) == "SHP",
-    meta$resources
+  shp_resources <- purrr::keep(
+    meta$resources,
+    \(res) toupper(res$format) == "SHP"
   )
   if (length(shp_resources) == 0) {
     cli::cli_abort(
@@ -386,14 +396,14 @@ list_boundaries <- function(
 
   # current layout is {iso3}_admin{level}.shp; older releases use names
   # such as {iso3}_admbnda_adm{level}_{source}.shp
-  target <- shp_files[
-    grepl(sprintf("_admin%d\\.shp$", level), basename(shp_files))
-  ]
+  target <- purrr::keep(shp_files, \(shp) {
+    grepl(sprintf("_admin%d\\.shp$", level), basename(shp))
+  })
   if (length(target) == 0) {
-    target <- shp_files[
-      grepl(sprintf("adm%d", level), basename(shp_files)) &
-        !grepl("admbnd[lpt]|lines|points", basename(shp_files))
-    ]
+    target <- purrr::keep(shp_files, \(shp) {
+      grepl(sprintf("adm%d", level), basename(shp)) &&
+        !grepl("admbnd[lpt]|lines|points", basename(shp))
+    })
   }
   if (length(target) == 0) {
     cli::cli_abort(c(
@@ -404,19 +414,28 @@ list_boundaries <- function(
 
   x <- sf::st_read(target[[1]], quiet = TRUE)
   geom_col <- attr(x, "sf_column")
-  names(x)[names(x) != geom_col] <- tolower(names(x)[names(x) != geom_col])
+  x <- dplyr::rename_with(x, tolower, .cols = -dplyr::all_of(geom_col))
 
   .pick <- function(candidates) {
     col <- intersect(candidates, names(x))
     if (length(col) == 0) NA_character_ else as.character(x[[col[[1]]]])
   }
 
-  x$adm0_code <- iso3
-  x$adm0 <- .pick(c("adm0_name", "adm0_en"))
-  for (l in seq_len(level)) {
-    x[[paste0("adm", l)]] <- .pick(paste0("adm", l, c("_name", "_en")))
-    x[[paste0("adm", l, "_code")]] <- .pick(paste0("adm", l, "_pcode"))
-  }
+  unit_cols <- purrr::map(seq_len(level), \(l) {
+    stats::setNames(
+      list(
+        .pick(paste0("adm", l, c("_name", "_en"))),
+        .pick(paste0("adm", l, "_pcode"))
+      ),
+      paste0("adm", l, c("", "_code"))
+    )
+  }) |>
+    purrr::list_flatten()
+  country_cols <- list(
+    adm0_code = iso3,
+    adm0 = .pick(c("adm0_name", "adm0_en"))
+  )
+  x <- dplyr::mutate(x, !!!country_cols, !!!unit_cols)
 
   dataset_date <- .first_date(meta$dataset_date)
   cli::cli_alert_success(
@@ -483,12 +502,17 @@ list_boundaries <- function(
   .download_file(meta$gjDownloadURL, geojson_path, quiet)
   x <- sf::st_read(geojson_path, quiet = TRUE)
 
-  x$adm0_code <- iso3
-  x$adm0 <- if (level == 0) x$shapeName else meta$boundaryName
-  if (level > 0) {
-    x[[paste0("adm", level)]] <- x$shapeName
-    x[[paste0("adm", level, "_code")]] <- x$shapeID
+  country_cols <- list(
+    adm0_code = iso3,
+    adm0 = if (level == 0) x$shapeName else meta$boundaryName
+  )
+  unit_cols <- if (level > 0) {
+    stats::setNames(
+      list(x$shapeName, x$shapeID),
+      paste0("adm", level, c("", "_code"))
+    )
   }
+  x <- dplyr::mutate(x, !!!country_cols, !!!unit_cols)
 
   cli::cli_alert_success(
     paste0(
@@ -505,7 +529,7 @@ list_boundaries <- function(
 .list_boundaries_geoboundaries <- function(iso3) {
   meta <- .geoboundaries_meta(iso3, "ALL")
   .field <- function(name) {
-    unique(vapply(meta, function(m) .or_na(m[[name]]), character(1)))
+    unique(purrr::map_chr(meta, \(m) .or_na(m[[name]])))
   }
   list(
     available = length(meta) > 0,
@@ -537,9 +561,9 @@ gadm_licence <- paste0(
   .download_file(url, zip_path, quiet)
   shp_files <- .zip_shapefiles(zip_path)
 
-  target <- shp_files[
-    basename(shp_files) == sprintf("gadm41_%s_%d.shp", iso3, level)
-  ]
+  target <- purrr::keep(shp_files, \(shp) {
+    basename(shp) == sprintf("gadm41_%s_%d.shp", iso3, level)
+  })
   if (length(target) == 0) {
     cli::cli_abort(c(
       "No ADM{level} layer in the GADM archive for {.val {iso3}}",
@@ -549,12 +573,15 @@ gadm_licence <- paste0(
 
   x <- sf::st_read(target[[1]], quiet = TRUE)
 
-  x$adm0_code <- x$GID_0
-  x$adm0 <- x$COUNTRY
-  for (l in seq_len(level)) {
-    x[[paste0("adm", l)]] <- x[[paste0("NAME_", l)]]
-    x[[paste0("adm", l, "_code")]] <- x[[paste0("GID_", l)]]
-  }
+  country_cols <- list(adm0_code = x$GID_0, adm0 = x$COUNTRY)
+  unit_cols <- purrr::map(seq_len(level), \(l) {
+    stats::setNames(
+      list(x[[paste0("NAME_", l)]], x[[paste0("GID_", l)]]),
+      paste0("adm", l, c("", "_code"))
+    )
+  }) |>
+    purrr::list_flatten()
+  x <- dplyr::mutate(x, !!!country_cols, !!!unit_cols)
 
   cli::cli_alert_success(
     "{iso3} ADM{level}: {nrow(x)} units from GADM 4.1 ({gadm_licence})"
@@ -566,7 +593,7 @@ gadm_licence <- paste0(
 #' @noRd
 .list_boundaries_gadm <- function(iso3) {
   # GADM publishes one GeoJSON per level, so probe them to find the levels
-  has_level <- vapply(0:5, function(l) {
+  has_level <- purrr::map_lgl(0:5, \(l) {
     url <- sprintf(
       "https://geodata.ucdavis.edu/gadm/gadm4.1/json/gadm41_%s_%d.json.zip",
       iso3, l
@@ -576,11 +603,11 @@ gadm_licence <- paste0(
       httr2::req_error(is_error = function(resp) FALSE) |>
       httr2::req_perform()
     httr2::resp_status(resp) == 200
-  }, logical(1))
+  })
 
   list(
     available = any(has_level),
-    levels = paste((0:5)[has_level], collapse = ", "),
+    levels = paste(which(has_level) - 1L, collapse = ", "),
     version = "4.1",
     licence = gadm_licence,
     url = sprintf(
@@ -608,7 +635,7 @@ who_services <- c(
 
 #' @noRd
 .list_boundaries_who <- function(iso3) {
-  has_level <- vapply(names(who_services), function(admin_level) {
+  has_level <- purrr::map_lgl(names(who_services), \(admin_level) {
     resp <- httr2::request(.who_service_url(admin_level)) |>
       httr2::req_url_query(
         where = paste0("ISO_3_CODE = '", iso3, "'"),
@@ -618,11 +645,11 @@ who_services <- c(
       httr2::req_perform() |>
       httr2::resp_body_json(check_type = FALSE)
     isTRUE(resp$count > 0)
-  }, logical(1))
+  })
 
   list(
     available = any(has_level),
-    levels = paste((0:2)[has_level], collapse = ", "),
+    levels = paste(which(has_level) - 1L, collapse = ", "),
     version = NA_character_,
     licence = NA_character_,
     url = "https://services.arcgis.com/5T5nSi527N4F7luB/ArcGIS/rest/services"
@@ -731,7 +758,9 @@ who_services <- c(
   # keep active boundaries only when latest = TRUE
   if (latest && "ENDDATE" %in% names(new_sf)) {
     new_sf <- new_sf |>
-      dplyr::filter(ENDDATE == "253402214400000" | is.na(ENDDATE))
+      dplyr::filter(
+        .data$ENDDATE == "253402214400000" | is.na(.data$ENDDATE)
+      )
   }
 
   .ms_to_date <- function(ms) {
@@ -743,27 +772,27 @@ who_services <- c(
     admin_level,
     ADM0 = new_sf |>
       dplyr::transmute(
-        adm0_code = ISO_3_CODE,
-        adm0 = ADM0_NAME,
-        start_date = .ms_to_date(STARTDATE),
-        end_date = .ms_to_date(ENDDATE)
+        adm0_code = .data$ISO_3_CODE,
+        adm0 = .data$ADM0_NAME,
+        start_date = .ms_to_date(.data$STARTDATE),
+        end_date = .ms_to_date(.data$ENDDATE)
       ),
     ADM1 = new_sf |>
       dplyr::transmute(
-        adm0_code = ISO_3_CODE,
-        adm0 = ADM0_NAME,
-        adm1 = ADM1_NAME,
-        start_date = .ms_to_date(STARTDATE),
-        end_date = .ms_to_date(ENDDATE)
+        adm0_code = .data$ISO_3_CODE,
+        adm0 = .data$ADM0_NAME,
+        adm1 = .data$ADM1_NAME,
+        start_date = .ms_to_date(.data$STARTDATE),
+        end_date = .ms_to_date(.data$ENDDATE)
       ),
     ADM2 = new_sf |>
       dplyr::transmute(
-        adm0_code = ISO_3_CODE,
-        adm0 = ADM0_NAME,
-        adm1 = ADM1_NAME,
-        adm2 = ADM2_NAME,
-        start_date = .ms_to_date(STARTDATE),
-        end_date = .ms_to_date(ENDDATE)
+        adm0_code = .data$ISO_3_CODE,
+        adm0 = .data$ADM0_NAME,
+        adm1 = .data$ADM1_NAME,
+        adm2 = .data$ADM2_NAME,
+        start_date = .ms_to_date(.data$STARTDATE),
+        end_date = .ms_to_date(.data$ENDDATE)
       )
   )
 

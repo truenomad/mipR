@@ -17,7 +17,7 @@
   mcv1 <- "MCV/MCV1 - Routine Immunization, Target Age"
   mcv2 <- "MCV/MCV2 - Routine Immunization, Target Age"
 
-  data.frame(
+  dplyr::tibble(
     key = c(
       "mcv1_mean", "mcv1_upper", "mcv1_lower", "mcv1_adm", "mcv2_adm",
       "mcv2_citations", "methods"
@@ -40,21 +40,28 @@
       "mcv2_coverage_adm1_adm2_2000_{year}.xlsx",
       "mcv2_survey_citations.csv",
       "vcm_methods_introduction.pdf"
-    ),
-    stringsAsFactors = FALSE
+    )
+  )
+}
+
+# internal helper: put the release end year into each filename template
+#' @noRd
+.ihme_fill_year <- function(template, year) {
+  purrr::map2_chr(
+    template, year,
+    \(tmpl, yr) sub("{year}", yr, tmpl, fixed = TRUE)
   )
 }
 
 # internal helper: WebDAV url for a file in the share, escaping each segment
 #' @noRd
 .ihme_webdav_url <- function(folder, filename) {
-  mapply(
-    function(folder, filename) {
-      segments <- c(strsplit(folder, "/", fixed = TRUE)[[1]], filename)
+  purrr::map2_chr(
+    unname(folder), unname(filename),
+    \(fld, fname) {
+      segments <- c(strsplit(fld, "/", fixed = TRUE)[[1]], fname)
       paste(c(.ihme_webdav_root, curl::curl_escape(segments)), collapse = "/")
-    },
-    folder, filename,
-    USE.NAMES = FALSE
+    }
   )
 }
 
@@ -68,6 +75,72 @@
     userpwd = paste0(.ihme_share_token, ":"),
     low_speed_limit = 1024, low_speed_time = 120
   ))
+}
+
+# internal helper: one download attempt, as a table of curl's success,
+# status code and error, plus whether the .part file was written
+#' @noRd
+.ihme_attempt <- function(urls, part_paths, quiet) {
+  .ihme_download(urls, part_paths, quiet) |>
+    dplyr::as_tibble() |>
+    dplyr::select("success", "status_code", "error") |>
+    dplyr::mutate(
+      fetched = .data$success %in% TRUE & file.exists(part_paths)
+    )
+}
+
+# internal helper: download the files in to_fetch (columns folder, remote
+# and dest), retry failures one at a time and report what failed
+#' @noRd
+.ihme_fetch_files <- function(to_fetch, quiet) {
+  to_fetch <- to_fetch |>
+    dplyr::mutate(
+      row = dplyr::row_number(),
+      url = .ihme_webdav_url(.data$folder, .data$remote),
+      part = paste0(.data$dest, ".part")
+    )
+  attempts <- dplyr::bind_cols(
+    to_fetch,
+    .ihme_attempt(to_fetch$url, to_fetch$part, quiet)
+  )
+
+  # the share can drop a file while the large rasters are downloading, so
+  # retry failures one at a time
+  retry <- dplyr::filter(attempts, !.data$fetched)
+  if (nrow(retry) > 0) {
+    retried <- purrr::map2(
+      retry$url, retry$part,
+      \(url, part) .ihme_attempt(url, part, quiet)
+    ) |>
+      purrr::list_rbind() |>
+      dplyr::mutate(row = retry$row)
+    attempts <- dplyr::rows_update(attempts, retried, by = "row")
+  }
+
+  done <- dplyr::filter(attempts, .data$fetched)
+  file.rename(done$part, done$dest)
+
+  # keep interrupted downloads for resuming, but drop error-page bodies
+  attempts |>
+    dplyr::filter(!.data$fetched, .data$status_code %in% 400:599) |>
+    dplyr::pull("part") |>
+    unlink()
+
+  attempts |>
+    dplyr::filter(!.data$fetched) |>
+    dplyr::mutate(
+      reason = dplyr::if_else(
+        is.na(.data$error),
+        paste("HTTP", .data$status_code),
+        .data$error
+      )
+    ) |>
+    dplyr::select("remote", "reason") |>
+    purrr::pwalk(\(remote, reason) {
+      cli::cli_alert_danger("Failed to download {remote} ({reason})")
+    })
+
+  invisible(NULL)
 }
 
 # internal helper: authenticated httr2 request against the share
@@ -89,65 +162,65 @@
     .ihme_first_release_year
   )
 
-  versioned <- grepl("{year}", files$remote, fixed = TRUE)
-  resolved <- rep(NA_integer_, nrow(files))
-
-  probes <- list()
-  for (i in which(versioned)) {
-    local_paths <- file.path(
-      dest_dir,
-      vapply(
-        candidate_years,
-        function(year) sub("{year}", year, files$local[i], fixed = TRUE),
-        character(1)
-      )
+  # one row per versioned file and candidate year, newest year first
+  candidates <- files |>
+    dplyr::mutate(row = dplyr::row_number()) |>
+    dplyr::filter(grepl("{year}", .data$remote, fixed = TRUE)) |>
+    tidyr::expand_grid(year = candidate_years) |>
+    dplyr::mutate(
+      local_path = file.path(
+        dest_dir, .ihme_fill_year(.data$local, .data$year)
+      ),
+      is_local = file.exists(.data$local_path)
     )
-    local_hit <- which(file.exists(local_paths))[1]
-    if (!is.na(local_hit)) resolved[i] <- candidate_years[local_hit]
 
-    # only years newer than the local copy are worth probing
-    newer_years <- if (is.na(local_hit)) {
-      candidate_years
-    } else {
-      candidate_years[seq_len(local_hit - 1)]
-    }
-    for (year in newer_years) {
-      probes[[length(probes) + 1]] <- list(row = i, year = year)
-    }
-  }
+  # newest local copy of each file
+  local_years <- candidates |>
+    dplyr::filter(.data$is_local) |>
+    dplyr::slice_head(n = 1, by = "row") |>
+    dplyr::select("row", local_year = "year")
 
-  if (length(probes) == 0) {
-    return(resolved)
-  }
+  # only years newer than the local copy are worth probing
+  probes <- candidates |>
+    dplyr::left_join(local_years, by = "row") |>
+    dplyr::filter(is.na(.data$local_year) | .data$year > .data$local_year)
 
-  requests <- lapply(probes, function(probe) {
-    remote <- sub("{year}", probe$year, files$remote[probe$row], fixed = TRUE)
-    .ihme_webdav_url(files$folder[probe$row], remote) |>
-      .ihme_request() |>
-      httr2::req_method("HEAD")
-  })
-  responses <- httr2::req_perform_parallel(
-    requests,
-    on_error = "continue",
-    progress = FALSE
-  )
-  found <- vapply(
-    responses,
-    function(response) {
+  probe_found <- if (nrow(probes) == 0) {
+    logical(0)
+  } else {
+    requests <- probes |>
+      dplyr::mutate(
+        url = .ihme_webdav_url(
+          .data$folder, .ihme_fill_year(.data$remote, .data$year)
+        )
+      ) |>
+      dplyr::pull("url") |>
+      purrr::map(\(url) {
+        .ihme_request(url) |>
+          httr2::req_method("HEAD")
+      })
+    responses <- httr2::req_perform_parallel(
+      requests,
+      on_error = "continue",
+      progress = FALSE
+    )
+    purrr::map_lgl(responses, \(response) {
       inherits(response, "httr2_response") &&
         httr2::resp_status(response) == 200
-    },
-    logical(1)
-  )
-
-  # probes run newest first, so the first hit for a row is its latest year
-  for (j in which(found)) {
-    row <- probes[[j]]$row
-    year <- probes[[j]]$year
-    if (is.na(resolved[row]) || year > resolved[row]) resolved[row] <- year
+    })
   }
 
-  resolved
+  # the newest of the local copy and the years found on the share
+  latest <- probes |>
+    dplyr::filter(probe_found) |>
+    dplyr::select("row", "year") |>
+    dplyr::bind_rows(dplyr::rename(local_years, year = "local_year")) |>
+    dplyr::arrange(dplyr::desc(.data$year)) |>
+    dplyr::slice_head(n = 1, by = "row")
+
+  dplyr::tibble(row = seq_len(nrow(files))) |>
+    dplyr::left_join(latest, by = "row") |>
+    dplyr::pull("year")
 }
 
 # internal helper: newest release document, from one PROPFIND on the top
@@ -181,12 +254,12 @@
 # filenames, NA if none match
 #' @noRd
 .newest_release_document <- function(filenames, pattern) {
-  matches <- filenames[grepl(pattern, filenames)]
+  matches <- grep(pattern, filenames, value = TRUE)
   if (length(matches) == 0) {
     return(NA_character_)
   }
   versions <- as.integer(sub(pattern, "\\1", matches))
-  matches[which.max(versions)]
+  matches[[which.max(versions)]]
 }
 
 #' Download IHME Geospatial MCV Coverage Estimates
@@ -246,19 +319,35 @@ get_ihme_mcv <- function(dest_dir = ".", quiet = FALSE) {
   if (!quiet) {
     cli::cli_alert_info("Checking the IHME share for the latest release")
   }
-  years <- .ihme_resolve_years(files, dest_dir)
+  resolved_years <- .ihme_resolve_years(files, dest_dir)
 
-  versioned <- grepl("{year}", files$remote, fixed = TRUE)
-  resolved <- !versioned | !is.na(years)
-  for (i in which(versioned & resolved)) {
-    files$remote[i] <- sub("{year}", years[i], files$remote[i], fixed = TRUE)
-    files$local[i] <- sub("{year}", years[i], files$local[i], fixed = TRUE)
-  }
-  for (i in which(!resolved)) {
-    cli::cli_alert_danger(
-      "No release found on the IHME share for {.file {files$remote[i]}}"
-    )
-  }
+  files <- files |>
+    dplyr::mutate(
+      year = resolved_years,
+      versioned = grepl("{year}", .data$remote, fixed = TRUE),
+      resolved = !.data$versioned | !is.na(.data$year),
+      fill = .data$versioned & .data$resolved,
+      remote = dplyr::if_else(
+        .data$fill,
+        .ihme_fill_year(.data$remote, .data$year),
+        .data$remote
+      ),
+      local = dplyr::if_else(
+        .data$fill,
+        .ihme_fill_year(.data$local, .data$year),
+        .data$local
+      )
+    ) |>
+    dplyr::select("key", "folder", "remote", "local", "resolved")
+
+  files |>
+    dplyr::filter(!.data$resolved) |>
+    dplyr::pull("remote") |>
+    purrr::walk(\(remote) {
+      cli::cli_alert_danger(
+        "No release found on the IHME share for {.file {remote}}"
+      )
+    })
 
   # release document: newest on the share, else the newest local copy
   release_pattern <- "^vcm_version_([0-9]+)_release_document_.*\\.pdf$"
@@ -268,66 +357,51 @@ get_ihme_mcv <- function(dest_dir = ".", quiet = FALSE) {
   } else {
     tolower(release_remote)
   }
-  files <- rbind(
-    files,
-    data.frame(
-      key = "release_notes",
-      folder = "",
-      remote = release_remote,
-      local = release_local,
-      stringsAsFactors = FALSE
+  files <- files |>
+    dplyr::bind_rows(
+      dplyr::tibble(
+        key = "release_notes",
+        folder = "",
+        remote = release_remote,
+        local = release_local,
+        resolved = !is.na(release_local)
+      )
+    ) |>
+    dplyr::mutate(
+      dest = dplyr::if_else(
+        .data$resolved,
+        file.path(dest_dir, .data$local),
+        NA_character_
+      )
     )
-  )
-  resolved <- c(resolved, !is.na(release_local))
   if (is.na(release_local)) {
     cli::cli_alert_danger("No release document found on the IHME share")
   }
 
-  dests <- rep(NA_character_, nrow(files))
-  dests[resolved] <- file.path(dest_dir, files$local[resolved])
-
-  exists_idx <- which(resolved & file.exists(dests))
   if (!quiet) {
-    for (i in exists_idx) {
-      cli::cli_alert_info("Skipping {basename(dests[i])} (already exists)")
-    }
+    files |>
+      dplyr::filter(.data$resolved, file.exists(.data$dest)) |>
+      dplyr::pull("dest") |>
+      purrr::walk(\(dest) {
+        cli::cli_alert_info("Skipping {basename(dest)} (already exists)")
+      })
   }
 
-  fetch_idx <- which(resolved & !file.exists(dests) & !is.na(files$remote))
-  if (length(fetch_idx) > 0) {
-    urls <- .ihme_webdav_url(files$folder[fetch_idx], files$remote[fetch_idx])
-    part_paths <- paste0(dests[fetch_idx], ".part")
+  to_fetch <- files |>
+    dplyr::filter(
+      .data$resolved, !file.exists(.data$dest), !is.na(.data$remote)
+    )
+  if (nrow(to_fetch) > 0) {
+    .ihme_fetch_files(to_fetch, quiet)
+  }
 
-    results <- .ihme_download(urls, part_paths, quiet)
-    fetched <- results$success %in% TRUE & file.exists(part_paths)
-
-    # the share can drop a file while the large rasters are downloading, so
-    # retry failures one at a time
-    for (j in which(!fetched)) {
-      results[j, ] <- .ihme_download(urls[j], part_paths[j], quiet)
-      fetched[j] <- results$success[j] %in% TRUE & file.exists(part_paths[j])
-    }
-
-    file.rename(part_paths[fetched], dests[fetch_idx][fetched])
-
-    # keep interrupted downloads for resuming, but drop error-page bodies
-    http_error <- !fetched & results$status_code %in% 400:599
-    unlink(part_paths[http_error])
-
-    for (j in which(!fetched)) {
-      reason <- if (is.na(results$error[j])) {
-        paste("HTTP", results$status_code[j])
-      } else {
-        results$error[j]
-      }
-      cli::cli_alert_danger(
-        "Failed to download {files$remote[fetch_idx[j]]} ({reason})"
+  paths <- files |>
+    dplyr::mutate(
+      path = dplyr::if_else(
+        file.exists(.data$dest) %in% TRUE, .data$dest, NA_character_
       )
-    }
-  }
-
-  paths <- ifelse(file.exists(dests) %in% TRUE, dests, NA_character_)
-  names(paths) <- files$key
+    )
+  paths <- stats::setNames(paths$path, paths$key)
 
   if (!quiet) {
     cli::cli_alert_success(paste0(
@@ -392,7 +466,7 @@ read_ihme_mcv_admin <- function(
   if (!sheet %in% readxl::excel_sheets(file)) {
     cli::cli_abort("Sheet {.val {sheet}} not found in {.file {file}}.")
   }
-  x <- as.data.frame(readxl::read_excel(file, sheet = sheet))
+  x <- readxl::read_excel(file, sheet = sheet)
 
   label <- toupper(dose)
   needed <- c(
@@ -410,7 +484,8 @@ read_ihme_mcv_admin <- function(
   }
 
   if (!is.null(country)) {
-    x <- x[toupper(x$ISO3) %in% toupper(country), ]
+    keep_iso3 <- toupper(country)
+    x <- dplyr::filter(x, toupper(.data$ISO3) %in% keep_iso3)
     if (nrow(x) == 0) {
       cli::cli_abort(
         "No rows for {.val {toupper(country)}} in the IHME table."
@@ -418,25 +493,26 @@ read_ihme_mcv_admin <- function(
     }
   }
 
-  out <- data.frame(
-    iso3 = x$ISO3,
-    adm0 = x$Country,
-    adm1 = x$Admin1
-  )
-  if (adm_level == 2) {
-    out$adm2 <- x$Admin2
-  }
-  out$year <- as.integer(x$Year)
-  out$dose <- dose
-  out$coverage_mean <- x[[paste(label, "- Mean")]]
-  out$coverage_lower <- x[[paste(label, "- Lower")]]
-  out$coverage_upper <- x[[paste(label, "- Upper")]]
-  out$pop_under_1 <- x[["Population under 1 year"]]
+  dose_name <- dose
+  out <- x |>
+    dplyr::transmute(
+      iso3 = .data$ISO3,
+      adm0 = .data$Country,
+      adm1 = .data$Admin1,
+      adm2 = if (adm_level == 2) .data$Admin2 else NULL,
+      year = as.integer(.data$Year),
+      dose = dose_name,
+      coverage_mean = .data[[paste(label, "- Mean")]],
+      coverage_lower = .data[[paste(label, "- Lower")]],
+      coverage_upper = .data[[paste(label, "- Upper")]],
+      pop_under_1 = .data[["Population under 1 year"]]
+    )
 
+  # xtfrm ranks text in the session locale, as base order() does
   keys <- intersect(c("iso3", "adm1", "adm2", "year"), names(out))
-  out <- out[do.call(order, unname(as.list(out[keys]))), ]
-  rownames(out) <- NULL
-  out
+  out |>
+    dplyr::arrange(dplyr::across(dplyr::all_of(keys), xtfrm)) |>
+    as.data.frame()
 }
 
 # internal helper: the admin table for a dose, from a file path or the

@@ -83,61 +83,75 @@
 # per file present
 #' @noRd
 .worldpop_fetch <- function(urls, dests, quiet = FALSE, max_active = 6) {
-  missing_idx <- which(!file.exists(dests))
-  if (length(missing_idx) == 0) {
+  jobs <- dplyr::tibble(url = urls, dest = dests) |>
+    dplyr::filter(!file.exists(.data$dest)) |>
+    dplyr::mutate(
+      id = dplyr::row_number(),
+      part = paste0(.data$dest, ".part"),
+      fetched = FALSE,
+      not_found = FALSE
+    )
+  if (nrow(jobs) == 0) {
     return(rep(TRUE, length(dests)))
   }
 
-  part_paths <- paste0(dests[missing_idx], ".part")
-  fetched <- rep(FALSE, length(missing_idx))
-  not_found <- rep(FALSE, length(missing_idx))
-  pauses <- c(0, 10, 30)
+  # each pass retries the files still missing, after its pause
+  jobs <- purrr::reduce(
+    c(0, 10, 30),
+    \(jobs, pause) .worldpop_fetch_pass(jobs, pause, quiet, max_active),
+    .init = jobs
+  )
 
-  for (pass in seq_along(pauses)) {
-    todo <- which(!fetched & !not_found)
-    if (length(todo) == 0) {
-      break
-    }
-    if (pauses[pass] > 0) {
-      if (!quiet) {
-        cli::cli_alert_info(
-          "Retrying {length(todo)} file{?s} in {pauses[pass]}s"
-        )
-      }
-      Sys.sleep(pauses[pass])
-    }
-
-    requests <- lapply(urls[missing_idx][todo], function(url) {
-      httr2::request(url) |>
-        httr2::req_options(low_speed_limit = 1024, low_speed_time = 120) |>
-        httr2::req_retry(
-          max_tries = 3, backoff = ~5, retry_on_failure = TRUE
-        )
-    })
-    responses <- httr2::req_perform_parallel(
-      requests,
-      paths = part_paths[todo],
-      max_active = max_active,
-      on_error = "continue",
-      progress = !quiet
-    )
-    fetched[todo] <- vapply(
-      responses,
-      function(response) inherits(response, "httr2_response"),
-      logical(1)
-    )
-    # a file the server does not have is not retried
-    not_found[todo] <- vapply(
-      responses,
-      function(response) inherits(response, "httr2_http_404"),
-      logical(1)
-    )
-  }
-
-  file.rename(part_paths[fetched], dests[missing_idx][fetched])
-  unlink(part_paths[!fetched])
+  done <- dplyr::filter(jobs, .data$fetched)
+  file.rename(done$part, done$dest)
+  unlink(dplyr::filter(jobs, !.data$fetched)$part)
 
   file.exists(dests)
+}
+
+# internal helper: one download pass over the jobs not yet fetched or
+# missing on the server. returns the jobs with their status updated
+#' @noRd
+.worldpop_fetch_pass <- function(jobs, pause, quiet, max_active) {
+  todo <- dplyr::filter(jobs, !.data$fetched, !.data$not_found)
+  if (nrow(todo) == 0) {
+    return(jobs)
+  }
+  if (pause > 0) {
+    if (!quiet) {
+      cli::cli_alert_info(
+        "Retrying {nrow(todo)} file{?s} in {pause}s"
+      )
+    }
+    Sys.sleep(pause)
+  }
+
+  requests <- purrr::map(todo$url, \(url) {
+    httr2::request(url) |>
+      httr2::req_options(low_speed_limit = 1024, low_speed_time = 120) |>
+      httr2::req_retry(
+        max_tries = 3, backoff = ~5, retry_on_failure = TRUE
+      )
+  })
+  responses <- httr2::req_perform_parallel(
+    requests,
+    paths = todo$part,
+    max_active = max_active,
+    on_error = "continue",
+    progress = !quiet
+  )
+
+  # a file the server does not have is not retried
+  status <- dplyr::tibble(
+    id = todo$id,
+    fetched = purrr::map_lgl(
+      responses, \(response) inherits(response, "httr2_response")
+    ),
+    not_found = purrr::map_lgl(
+      responses, \(response) inherits(response, "httr2_http_404")
+    )
+  )
+  dplyr::rows_update(jobs, status, by = "id")
 }
 
 #' Download Population Rasters from WorldPop
@@ -274,10 +288,9 @@ get_worldpop <- function(
 
   # normalise codes: keep "GLOBAL" (case-insensitive); uppercase ISO3
   # otherwise
-  country_codes <- vapply(
+  country_codes <- purrr::map_chr(
     country_codes,
-    function(c) if (toupper(c) == "GLOBAL") "GLOBAL" else toupper(c),
-    character(1)
+    \(cc) if (toupper(cc) == "GLOBAL") "GLOBAL" else toupper(cc)
   )
 
   if (!dir.exists(dest_dir)) dir.create(dest_dir, recursive = TRUE)
@@ -319,19 +332,22 @@ get_worldpop <- function(
     all_params <- c(all_params, list(r2025a_res$params))
   }
 
-  # combine params for counting
-  combined_params <- do.call(rbind, all_params)
-  counts <- tapply(combined_params$success, combined_params$country, sum)
+  # successful downloads per country, sorted by country code
+  count_table <- dplyr::bind_rows(all_params) |>
+    dplyr::summarise(n = sum(.data$success), .by = "country") |>
+    dplyr::arrange(.data$country)
+  counts <- stats::setNames(count_table$n, count_table$country) |>
+    as.array()
 
   if (!quiet) {
     cli::cli_alert_success(
       "Download of WorldPop {type} rasters is complete!"
     )
-    for (cc in names(counts)) {
+    purrr::iwalk(counts, \(n, cc) {
       cli::cli_alert_info(
-        "{cc}: {counts[[cc]]} of {length(years)} years downloaded"
+        "{cc}: {n} of {length(years)} years downloaded"
       )
-    }
+    })
   }
 
   downloaded_files <- unlist(all_results)
@@ -351,39 +367,40 @@ get_worldpop <- function(
   dest_dir,
   quiet
 ) {
-  params <- expand.grid(
-    country = country_codes,
-    year = years,
-    stringsAsFactors = FALSE
-  )
+  # countries vary fastest within each year
+  url_infos <- tidyr::expand_grid(year = years, country = country_codes) |>
+    dplyr::select("country", "year") |>
+    dplyr::mutate(
+      info = purrr::map2(
+        .data$country, .data$year,
+        \(cc, yr) .build_worldpop_url(cc, yr, type, dataset, resolution)
+      ),
+      url = purrr::map_chr(.data$info, "url"),
+      dest = file.path(dest_dir, purrr::map_chr(.data$info, "filename"))
+    )
 
-  url_infos <- Map(
-    function(cc, yr) .build_worldpop_url(cc, yr, type, dataset, resolution),
-    params$country,
-    params$year
-  )
-  urls <- vapply(url_infos, function(info) info$url, character(1))
-  dests <- file.path(
-    dest_dir,
-    vapply(url_infos, function(info) info$filename, character(1))
-  )
-
-  cached <- file.exists(dests)
-  if (!quiet && any(cached)) {
-    cli::cli_alert_info("Exists: {.file {basename(dests[cached])}}")
+  cached <- dplyr::filter(url_infos, file.exists(.data$dest))
+  if (!quiet && nrow(cached) > 0) {
+    cli::cli_alert_info("Exists: {.file {basename(cached$dest)}}")
   }
 
-  success <- .worldpop_fetch(urls, dests, quiet)
-  if (any(!success)) {
-    n_failed <- sum(!success)
+  params <- url_infos |>
+    dplyr::mutate(
+      success = .worldpop_fetch(.data$url, .data$dest, quiet)
+    )
+  failed <- dplyr::filter(params, !.data$success)
+  if (nrow(failed) > 0) {
+    n_failed <- nrow(failed)
     cli::cli_alert_warning(paste0(
       "Failed to download {n_failed} file{?s}: ",
-      "{.file {basename(dests[!success])}}"
+      "{.file {basename(failed$dest)}}"
     ))
   }
-  params$success <- success
 
-  list(results = ifelse(success, dests, NA_character_), params = params)
+  list(
+    results = dplyr::if_else(params$success, params$dest, NA_character_),
+    params = dplyr::select(params, "country", "year", "success")
+  )
 }
 
 # internal helper to build worldpop age-band URL and local filename. release
@@ -486,8 +503,8 @@ get_worldpop <- function(
   list(url = url, filename = local_fn)
 }
 
-# internal helper: build urls + dests for one (cc, yr) combo's band files
-# across bands * sexes
+# internal helper: table of urls and dests for one (cc, yr) combo's band
+# files across bands * sexes, with bands varying fastest
 #' @noRd
 .age_band_file_set <- function(
   cc,
@@ -498,64 +515,59 @@ get_worldpop <- function(
   release,
   out_dir
 ) {
-  combos <- expand.grid(
-    code = matching_bands$code,
-    sex = sexes,
-    stringsAsFactors = FALSE
-  )
-  url_infos <- Map(
-    function(band_code, sx) {
-      .build_worldpop_age_band_url(cc, sx, band_code, yr, resolution, release)
-    },
-    combos$code,
-    combos$sex
-  )
-
-  list(
-    urls = vapply(url_infos, function(info) info$url, character(1)),
-    dests = file.path(
-      out_dir,
-      vapply(url_infos, function(info) info$filename, character(1))
-    )
-  )
+  tidyr::expand_grid(sex = sexes, code = matching_bands$code) |>
+    dplyr::select("code", "sex") |>
+    dplyr::mutate(
+      info = purrr::map2(
+        .data$code, .data$sex,
+        \(band_code, sx) {
+          .build_worldpop_age_band_url(
+            cc, sx, band_code, yr, resolution, release
+          )
+        }
+      ),
+      url = purrr::map_chr(.data$info, "url"),
+      dest = file.path(out_dir, purrr::map_chr(.data$info, "filename"))
+    ) |>
+    dplyr::select(-"info")
 }
 
 # internal helper: fetch every combo's band files in one parallel batch,
 # re-downloading corrupt cached files. returns TRUE per complete combo
 #' @noRd
 .fetch_age_band_files <- function(plan_files, quiet) {
-  all_urls <- unlist(lapply(plan_files, function(file_set) file_set$urls))
-  all_dests <- unlist(lapply(plan_files, function(file_set) file_set$dests))
+  all_files <- purrr::list_rbind(plan_files)
 
   # repair cached files if corrupt
-  for (cached_file in unique(all_dests[file.exists(all_dests)])) {
-    valid <- tryCatch(
-      {
-        suppressWarnings(terra::rast(cached_file))
-        TRUE
-      },
-      error = function(e) FALSE
-    )
-    if (!valid) {
-      cli::cli_alert_warning(
-        "Corrupt file {basename(cached_file)}, re-downloading"
+  all_files$dest |>
+    unique() |>
+    purrr::keep(file.exists) |>
+    purrr::walk(\(cached_file) {
+      valid <- tryCatch(
+        {
+          suppressWarnings(terra::rast(cached_file))
+          TRUE
+        },
+        error = function(e) FALSE
       )
-      unlink(cached_file)
-    }
-  }
+      if (!valid) {
+        cli::cli_alert_warning(
+          "Corrupt file {basename(cached_file)}, re-downloading"
+        )
+        unlink(cached_file)
+      }
+    })
 
   # dedupe so the same file is never fetched twice concurrently
-  unique_idx <- !duplicated(all_dests)
-  success <- .worldpop_fetch(
-    all_urls[unique_idx], all_dests[unique_idx], quiet
-  )
-  ok_by_dest <- stats::setNames(success, all_dests[unique_idx])
+  ok_dests <- all_files |>
+    dplyr::filter(!duplicated(.data$dest)) |>
+    dplyr::mutate(
+      success = .worldpop_fetch(.data$url, .data$dest, quiet)
+    ) |>
+    dplyr::filter(.data$success) |>
+    dplyr::pull("dest")
 
-  vapply(
-    plan_files,
-    function(file_set) all(ok_by_dest[file_set$dests]),
-    logical(1)
-  )
+  purrr::map_lgl(plan_files, \(file_set) all(file_set$dest %in% ok_dests))
 }
 
 # single-year age rasters ------------------------------------------------------
@@ -606,11 +618,7 @@ get_worldpop <- function(
 #' @export
 worldpop_reference_date <- function(year, release = "R2025A") {
   release <- match.arg(release, choices = c("R2025A", "R2024B"))
-  vapply(
-    year,
-    function(yr) .worldpop_reference_date(release, yr)$date,
-    character(1)
-  )
+  purrr::map_chr(year, \(yr) .worldpop_reference_date(release, yr)$date)
 }
 
 # internal helper: WPP population by age at a WorldPop reference date. the
@@ -618,14 +626,23 @@ worldpop_reference_date <- function(year, release = "R2025A") {
 # Y-1 and 1 July Y is the mean of package years Y-1 and Y
 #' @noRd
 .wpp_pop_at <- function(wpp_cc, year, ref_date, wpp_col) {
-  years <- if (ref_date == "01-01") year - 1 else c(year - 1, year)
-  rows <- wpp_cc[wpp_cc$year %in% years, ]
-  if (length(unique(rows$year)) < length(years)) {
-    return(rows[0, c("age", wpp_col)])
+  wpp_years <- if (ref_date == "01-01") year - 1 else c(year - 1, year)
+  rows <- wpp_cc |>
+    dplyr::filter(.data$year %in% wpp_years) |>
+    dplyr::select(dplyr::all_of(c("year", "age", wpp_col)))
+  if (dplyr::n_distinct(rows$year) < length(wpp_years)) {
+    return(
+      rows |>
+        dplyr::slice(0) |>
+        dplyr::select(dplyr::all_of(c("age", wpp_col)))
+    )
   }
-  out <- stats::aggregate(rows[[wpp_col]], list(age = rows$age), mean)
-  names(out)[2] <- wpp_col
-  out
+  rows |>
+    dplyr::summarise(
+      dplyr::across(dplyr::all_of(wpp_col), mean),
+      .by = "age"
+    ) |>
+    dplyr::arrange(.data$age)
 }
 
 #' Make Single-Year Age Rasters from WorldPop Age Groups
@@ -731,54 +748,87 @@ get_worldpop_single_age <- function(
   wpp_col <- c(both = "pop", m = "popM", f = "popF")[[sex]]
 
   pop_cols <- c("country_code", "name", "year", "age", wpp_col)
-  wpp <- rbind(
-    .load_wpp("popAge1dt")[, pop_cols],
-    .load_wpp("popprojAge1dt")[, pop_cols]
-  )
-  locations <- unique(wpp[, c("country_code", "name")])
+  # the projection table stores year as text, so both are bound as text
+  wpp <- c("popAge1dt", "popprojAge1dt") |>
+    purrr::map(\(dataset) {
+      .load_wpp(dataset) |>
+        dplyr::select(dplyr::all_of(pop_cols)) |>
+        dplyr::mutate(year = as.character(.data$year))
+    }) |>
+    purrr::list_rbind()
+  locations <- wpp |>
+    dplyr::select("country_code", "name") |>
+    dplyr::distinct()
 
   if (!quiet) {
-    refs <- unique(lapply(
-      unique(years), .worldpop_reference_date,
-      release = release
-    ))
-    for (ref in refs[!vapply(refs, function(r) r$documented, logical(1))]) {
-      ref_label <- if (ref$date == "01-01") "1 January" else "1 July"
-      cli::cli_alert_info(paste0(
-        "WorldPop {ref$product} reference date not documented; ",
-        "assuming {ref_label}"
-      ))
-    }
+    unique(years) |>
+      purrr::map(\(yr) .worldpop_reference_date(release, yr)) |>
+      unique() |>
+      purrr::discard(\(ref) ref$documented) |>
+      purrr::walk(\(ref) {
+        ref_label <- if (ref$date == "01-01") "1 January" else "1 July"
+        cli::cli_alert_info(paste0(
+          "WorldPop {ref$product} reference date not documented; ",
+          "assuming {ref_label}"
+        ))
+      })
   }
 
-  paths <- character(0)
-  for (cc in toupper(unique(country_codes))) {
-    wpp_cc <- wpp[wpp$name == .match_wpp_country(cc, locations), ]
+  paths <- toupper(unique(country_codes)) |>
+    purrr::map(\(cc) {
+      wpp_name <- .match_wpp_country(cc, locations)
+      wpp_cc <- dplyr::filter(wpp, .data$name == wpp_name)
+      unique(years) |>
+        purrr::map(\(yr) {
+          .single_age_country_year(
+            cc, yr, ages, sex_label, wpp_cc, wpp_col, sex, resolution,
+            release, out_dir, group_dir, quiet
+          )
+        }) |>
+        purrr::list_c(ptype = character())
+    }) |>
+    purrr::list_c(ptype = character())
 
-    for (yr in unique(years)) {
-      out_fnames <- file.path(
-        out_dir,
-        sprintf("%s_%sage%02d_%d.tif", tolower(cc), sex_label, ages, yr)
-      )
-      paths <- c(paths, out_fnames)
-      todo <- !file.exists(out_fnames)
-      if (!any(todo)) {
-        if (!quiet) {
-          cli::cli_alert_info("Skipping {cc} {yr} (all ages already exist)")
-        }
-        next
-      }
+  invisible(purrr::keep(paths, file.exists))
+}
 
-      ref <- .worldpop_reference_date(release, yr)
-      .split_age_groups(
-        cc, yr, ages[todo], out_fnames[todo],
-        .wpp_pop_at(wpp_cc, yr, ref$date, wpp_col),
-        wpp_col, sex, resolution, release, group_dir, quiet
-      )
+# internal helper: make the missing single-year rasters for one
+# country-year. returns every output path for that country-year
+#' @noRd
+.single_age_country_year <- function(
+  cc,
+  yr,
+  ages,
+  sex_label,
+  wpp_cc,
+  wpp_col,
+  sex,
+  resolution,
+  release,
+  out_dir,
+  group_dir,
+  quiet
+) {
+  out_fnames <- file.path(
+    out_dir,
+    sprintf("%s_%sage%02d_%d.tif", tolower(cc), sex_label, ages, yr)
+  )
+  todo <- dplyr::tibble(age = ages, out_fname = out_fnames) |>
+    dplyr::filter(!file.exists(.data$out_fname))
+  if (nrow(todo) == 0) {
+    if (!quiet) {
+      cli::cli_alert_info("Skipping {cc} {yr} (all ages already exist)")
     }
+    return(out_fnames)
   }
 
-  invisible(paths[file.exists(paths)])
+  ref <- .worldpop_reference_date(release, yr)
+  .split_age_groups(
+    cc, yr, todo$age, todo$out_fname,
+    .wpp_pop_at(wpp_cc, yr, ref$date, wpp_col),
+    wpp_col, sex, resolution, release, group_dir, quiet
+  )
+  out_fnames
 }
 
 # internal helper: fetch the groups covering ages for one country-year into
@@ -802,20 +852,22 @@ get_worldpop_single_age <- function(
     return(invisible(NULL))
   }
 
-  band_lower <- .worldpop_band_lower(yr)
-  band_of_age <- findInterval(ages, band_lower)
-  bands <- data.frame(code = band_lower[sort(unique(band_of_age))])
-  bands$upper <- c(band_lower[-1] - 1, 100)[sort(unique(band_of_age))]
+  # each age sits in the group whose range covers it
+  all_bands <- dplyr::tibble(code = .worldpop_band_lower(yr)) |>
+    dplyr::mutate(upper = dplyr::lead(.data$code, default = 101) - 1)
+  age_bands <- dplyr::tibble(age = ages, out_fname = out_fnames) |>
+    dplyr::cross_join(all_bands) |>
+    dplyr::filter(.data$age >= .data$code, .data$age <= .data$upper)
+  bands <- age_bands |>
+    dplyr::select("code", "upper") |>
+    dplyr::distinct() |>
+    dplyr::arrange(.data$code)
 
   if (!quiet) {
-    group_labels <- ifelse(
-      bands$upper == 100,
-      paste0(bands$code, "+"),
-      ifelse(
-        bands$code == bands$upper,
-        bands$code,
-        paste(bands$code, bands$upper, sep = "-")
-      )
+    group_labels <- dplyr::case_when(
+      bands$upper == 100 ~ paste0(bands$code, "+"),
+      bands$code == bands$upper ~ as.character(bands$code),
+      .default = paste(bands$code, bands$upper, sep = "-")
     )
     age_label <- if (length(ages) == 1) {
       paste("age", ages)
@@ -849,31 +901,37 @@ get_worldpop_single_age <- function(
     return(invisible(NULL))
   }
 
-  # dests run band by band within each sex, as built by expand.grid
-  dests <- matrix(file_set$dests, nrow = nrow(bands))
-  wpp_pop <- stats::setNames(wpp_yr[[wpp_col]], wpp_yr$age)
+  wpp_pop <- wpp_yr |>
+    dplyr::select("age", wpp_pop = dplyr::all_of(wpp_col))
 
-  for (b in seq_len(nrow(bands))) {
-    group_raster <- NULL
-    for (band_file in dests[b, ]) {
-      r <- suppressWarnings(terra::rast(band_file))
-      group_raster <- if (is.null(group_raster)) r else group_raster + r
-    }
+  # sum the sex rasters of each group, then split it by WPP shares
+  purrr::walk2(bands$code, bands$upper, \(band_code, band_upper) {
+    group_raster <- file_set |>
+      dplyr::filter(.data$code == band_code) |>
+      dplyr::pull("dest") |>
+      purrr::map(\(band_file) suppressWarnings(terra::rast(band_file))) |>
+      purrr::reduce(\(total, r) total + r)
 
-    group_ages <- bands$code[b]:bands$upper[b]
-    group_pop <- sum(wpp_pop[as.character(group_ages)], na.rm = TRUE)
+    group_pop <- wpp_pop |>
+      dplyr::filter(.data$age >= band_code, .data$age <= band_upper) |>
+      dplyr::pull("wpp_pop") |>
+      sum(na.rm = TRUE)
 
-    for (j in which(band_of_age == findInterval(bands$code[b], band_lower))) {
-      share <- wpp_pop[[as.character(ages[j])]] / group_pop
-      suppressWarnings(terra::writeRaster(
-        group_raster * share, out_fnames[j],
-        overwrite = TRUE
-      ))
-      if (!quiet) {
-        cli::cli_alert_success("Written: {basename(out_fnames[j])}")
-      }
-    }
-  }
+    age_bands |>
+      dplyr::filter(.data$code == band_code) |>
+      dplyr::left_join(wpp_pop, by = "age") |>
+      dplyr::mutate(share = .data$wpp_pop / group_pop) |>
+      dplyr::select("out_fname", "share") |>
+      purrr::pwalk(\(out_fname, share) {
+        suppressWarnings(terra::writeRaster(
+          group_raster * share, out_fname,
+          overwrite = TRUE
+        ))
+        if (!quiet) {
+          cli::cli_alert_success("Written: {basename(out_fname)}")
+        }
+      })
+  })
 
   invisible(NULL)
 }
