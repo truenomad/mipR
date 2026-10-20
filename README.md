@@ -96,22 +96,22 @@ history <- mipR::build_vaccination_history(
 immunity <- mipR::estimate_immunity(history, cohorts, coupling = "dependent")
 summary_2025 <- mipR::summarise_immunity(immunity, at = "2025-06")
 
+mipR::map_immunity(summary_2025, shp, type = "bins", ncol = 4)
 mipR::plot_cohort_journey(
   immunity, birth = "2019-10", at = "2025-06", label = "adm1"
 )
-mipR::map_immunity(summary_2025, shp, type = "bins", ncol = 4)
 ```
+
+`map_immunity()` maps the share of children susceptible by state and age
+band.
+
+<img src="man/figures/nga_susceptible_map.png" alt="Share of children susceptible to measles by Nigerian state and age band, June 2025" width="100%" />
 
 `plot_cohort_journey()` follows one birth cohort from birth, in states
 picked at percentiles of its susceptible share, with arrows for the
 routine doses and the campaigns that reached it.
 
 <img src="man/figures/nga_cohort_journey.png" alt="Susceptible and vaccination-immune shares of the cohort born in October 2019, in nine Nigerian states from the 10th to the 90th percentile of susceptibility" width="100%" />
-
-`map_immunity()` maps the share of children susceptible by state and age
-band.
-
-<img src="man/figures/nga_susceptible_map.png" alt="Share of children susceptible to measles by Nigerian state and age band, June 2025" width="100%" />
 
 These figures use population from 2010 onwards and include
 vaccination-derived immunity only.
