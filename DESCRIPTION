@@ -21,21 +21,27 @@ Imports:
     curl,
     dplyr,
     exactextractr,
+    grDevices,
     httr2 (>= 1.0.0),
     openssl,
+    purrr,
     readxl,
     sf,
     stats,
     terra,
+    tidyr,
     tools,
     utils
 Suggests: 
+    ggplot2,
     knitr,
     rmarkdown,
+    sntutils,
     testthat (>= 3.0.0),
     wpp2024
 Remotes:
-    PPgp/wpp2024
+    PPgp/wpp2024,
+    ahadi-analytics/sntutils
 Config/testthat/edition: 3
 Encoding: UTF-8
 Language: en-GB

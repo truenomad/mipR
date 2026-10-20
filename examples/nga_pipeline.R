@@ -81,17 +81,24 @@ aged_pop_admin <- aged_pop_admin |>
 # MCV1 coverage by admin unit --------------------------------------------------
 ## ---------------------------------------------------------------------------##
 
-# weighted by the under-one population of the same year (or the nearest)
-mcv1 <- mipR::extract_raster(
-  rasters = here::here(
-    "01_data/1c_ihme/raw/mcv1_coverage_mean_2000_2025.tif"
-  ),
-  shapefile = shp,
-  id_cols = c("adm0", "adm1", "adm1_code"),
-  fun = c("mean", "weighted_mean"),
-  pop_rasters = here::here("01_data/1b_worldpop/raw"),
-  pop_pattern = "_age00_\\d{4}\\.tif$"
-)
+# the mean, lower and upper rasters, each weighted by the under-one
+# population of the same year (or the nearest)
+mcv1 <- purrr::map(c("mean", "lower", "upper"), \(bound) {
+  mipR::extract_raster(
+    rasters = here::here(
+      paste0("01_data/1c_ihme/raw/mcv1_coverage_", bound, "_2000_2025.tif")
+    ),
+    shapefile = shp,
+    id_cols = c("adm0", "adm1", "adm1_code"),
+    fun = "weighted_mean",
+    pop_rasters = here::here("01_data/1b_worldpop/raw"),
+    pop_pattern = "_age00_\\d{4}\\.tif$",
+    quiet = TRUE
+  ) |>
+    dplyr::select("adm0", "adm1", "adm1_code", "year", "weighted_mean") |>
+    dplyr::rename(!!paste0("coverage_", bound) := "weighted_mean")
+}) |>
+  purrr::reduce(dplyr::left_join, by = c("adm0", "adm1", "adm1_code", "year"))
 
 ## ---------------------------------------------------------------------------##
 # MCV2 coverage by admin unit --------------------------------------------------
@@ -163,3 +170,84 @@ cohorts$anchor_check[!cohorts$anchor_check$within_tolerance, ]
 # the switch from legacy to R2025A data shows between July 2014 and
 # January 2015
 cohorts$cohort_changes
+
+## ---------------------------------------------------------------------------##
+# Vaccination history ----------------------------------------------------------
+## ---------------------------------------------------------------------------##
+
+# routine coverage by state, year and dose, with IHME lower and upper bounds
+routine_coverage <- dplyr::bind_rows(
+  mcv1 |>
+    dplyr::transmute(
+      adm0, adm1, adm1_code, year, dose = "mcv1",
+      coverage = coverage_mean, coverage_lower, coverage_upper
+    ),
+  mcv2 |>
+    dplyr::transmute(
+      adm0, adm1, adm1_code, year, dose = "mcv2",
+      coverage = coverage_mean, coverage_lower, coverage_upper
+    )
+) |>
+  dplyr::filter(!is.na(adm1_code), !is.na(coverage))
+
+# national schedule; the MCV2 introduction date and age need confirming
+# against the Nigeria EPI schedule
+schedule <- tibble::tribble(
+  ~dose, ~age_months, ~start_date,
+  "mcv1", 9, NA,
+  "mcv2", 15, as.Date("2019-01-01")
+)
+
+history <- mipR::build_vaccination_history(
+  cohorts,
+  routine_coverage = routine_coverage,
+  campaigns = campaigns,
+  schedule = schedule,
+  geography = c("adm0", "adm1", "adm1_code")
+)
+
+# opportunities that could not be applied, such as campaigns without dates
+history$diagnostics
+
+## ---------------------------------------------------------------------------##
+# Immunity ---------------------------------------------------------------------
+## ---------------------------------------------------------------------------##
+
+immunity <- mipR::estimate_immunity(
+  history, cohorts,
+  coupling = "dependent"
+)
+
+# model doses against the post-campaign surveys
+checks <- mipR::check_immunity(immunity, campaigns)
+checks$summary
+
+# susceptible children by state and age band in mid-2025
+summary_2025 <- mipR::summarise_immunity(immunity, at = "2025-06")
+
+# intervals from the IHME and survey coverage bounds
+draws_2025 <- mipR::immunity_draws(
+  history, cohorts,
+  n_draws = 200, at = "2025-06"
+)
+
+## ---------------------------------------------------------------------------##
+# Plots and maps ---------------------------------------------------------------
+## ---------------------------------------------------------------------------##
+
+mipR::plot_cohort_protection(
+  immunity,
+  at = "2025-06",
+  output_file = here::here("03_outputs/plots/nga_cohort_protection.png"),
+  width = 9, height = 6
+)
+
+mipR::map_immunity(
+  summary_2025, shp,
+  type = "bins",
+  palette = "susceptibility",
+  ncol = 4,
+  output_file = here::here("03_outputs/plots/nga_susceptible_map.png"),
+  width = 12, height = 4.5
+)
+

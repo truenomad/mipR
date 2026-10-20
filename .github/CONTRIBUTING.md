@@ -4,6 +4,12 @@
 
 - Write all package code in R.
 - Use the base pipe `|>` only. Do not use `%>%`.
+- Write all code in tidyverse style, so the team can follow it: `dplyr`
+  verbs (with `.by =` for grouping), `tidyr` for reshaping, `purrr` with
+  `\(x)` lambdas for iteration, and tibbles. Do not use base R matrix or
+  array code, `apply()` families, `mapply()`, bracket indexing for
+  filtering or assignment, or offset tricks with `findInterval()`.
+- Name internal helpers with a leading dot, such as `.make_anchors()`.
 - Call functions from other packages with explicit namespaces, as
   `package::function()`.
 - Do not call `library()` or `require()` in package source code. Declare

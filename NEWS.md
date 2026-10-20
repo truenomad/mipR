@@ -80,3 +80,20 @@
   missing dates and coverage, invalid ages, unmatched units, duplicates and
   overlapping campaigns. Missing dates and coverage are flagged, never
   inferred or imputed.
+* Added the immunity engine, following the CDC immunity profile method (Li,
+  Goodson and Perry 2024):
+  * `build_vaccination_history()` lists routine and campaign opportunities
+    for each monthly birth cohort, with eligibility worked out from each
+    birth-date interval and IHME or survey coverage bounds kept.
+  * `estimate_immunity()` tracks each cohort's vaccination state through
+    its opportunities, with vaccine effectiveness by dose type and age
+    (`ve_cdc()`) and a choice of dose-overlap rule, and reports susceptible
+    and immune population by month and the protection each campaign added.
+  * `summarise_immunity()` adds results up by geography, month and age
+    band; `check_immunity()` compares them with post-campaign survey
+    indicators; `immunity_draws()` gives intervals from coverage bounds.
+  * `plot_cohort_protection()` draws the campaign protection heatmap and
+    `map_immunity()` maps the susceptible share with data-driven scales.
+    Both take a palette from `get_palette()` / `list_palettes()` and can
+    save to a file. `save_plot()` and `compress_png()` save and compress
+    figures.
