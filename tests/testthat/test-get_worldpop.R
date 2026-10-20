@@ -538,3 +538,14 @@ testthat::test_that(".split_age_groups splits a group by WPP shares", {
   testthat::expect_equal(terra::values(terra::rast(out_fnames[1]))[1], 10)
   testthat::expect_equal(terra::values(terra::rast(out_fnames[2]))[1], 40)
 })
+
+testthat::test_that("worldpop_reference_date gives each year's date", {
+  testthat::expect_identical(
+    worldpop_reference_date(c(2010, 2014, 2015, 2025)),
+    c("07-01", "07-01", "01-01", "01-01")
+  )
+  testthat::expect_identical(
+    worldpop_reference_date(2020, release = "R2024B"),
+    "01-01"
+  )
+})

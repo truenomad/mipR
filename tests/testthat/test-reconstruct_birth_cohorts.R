@@ -40,6 +40,35 @@ testthat::test_that("a single anchor is spread over birth months by day", {
   testthat::expect_equal(out$anchor_check$difference, 0)
 })
 
+testthat::test_that("ref_date can vary by row through a column", {
+  pop <- data.frame(
+    geography = "A",
+    year = c(2014, 2015),
+    age = 0,
+    pop = c(365, 365),
+    ref = c("07-01", "01-01")
+  )
+  out <- reconstruct_birth_cohorts(
+    pop, geography = "geography", ref_date = "ref", method = "uniform"
+  )
+
+  testthat::expect_identical(
+    out$anchor_check$ref_date,
+    as.Date(c("2014-07-01", "2015-01-01"))
+  )
+  # aged 0 on 1 July 2014: born July 2013 to June 2014
+  births <- unique(out$cohorts$birth_month)
+  testthat::expect_identical(min(births), as.Date("2013-07-01"))
+  testthat::expect_identical(max(births), as.Date("2014-12-01"))
+  testthat::expect_error(
+    reconstruct_birth_cohorts(
+      transform(pop, ref = c("07-01", "July")),
+      geography = "geography", ref_date = "ref", method = "uniform"
+    ),
+    "MM-DD"
+  )
+})
+
 testthat::test_that("a 1 July reference date shifts the birth window", {
   pop <- data.frame(geography = "A", year = 2025, age = 0, pop = 365)
   out <- reconstruct_birth_cohorts(

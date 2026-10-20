@@ -578,6 +578,41 @@ get_worldpop <- function(
   list(product = release, date = "01-01", documented = release == "R2025A")
 }
 
+#' Reference Date of WorldPop Age-Sex Estimates
+#'
+#' Gives the reference date within each year of the WorldPop rasters used
+#' by [get_worldpop_single_age()], as `"MM-DD"`, for the `ref_date`
+#' argument of [reconstruct_birth_cohorts()].
+#'
+#' @details
+#' R2025A refers to 1 January, as stated in its release statement. R2024B
+#' does not state a date and is also taken as 1 January. The legacy
+#' 2000-2020 data, used for years before 2015, do not state a date and are
+#' taken as 1 July.
+#'
+#' @param year Numeric vector of years.
+#' @param release WorldPop release used for 2015 onwards: `"R2025A"`
+#'   (default) or `"R2024B"`.
+#'
+#' @return Character vector of `"MM-DD"`, one per year.
+#'
+#' @examples
+#' worldpop_reference_date(c(2010, 2014, 2015, 2025))
+#'
+#' \dontrun{
+#' pop$ref_date <- worldpop_reference_date(pop$year)
+#' reconstruct_birth_cohorts(pop, geography = "adm1", ref_date = "ref_date")
+#' }
+#' @export
+worldpop_reference_date <- function(year, release = "R2025A") {
+  release <- match.arg(release, choices = c("R2025A", "R2024B"))
+  vapply(
+    year,
+    function(yr) .worldpop_reference_date(release, yr)$date,
+    character(1)
+  )
+}
+
 # internal helper: WPP population by age at a WorldPop reference date. the
 # wpp2024 package's year Y is 31 December Y, so 1 January Y is package year
 # Y-1 and 1 July Y is the mean of package years Y-1 and Y

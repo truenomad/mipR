@@ -33,10 +33,11 @@ demog <- mipR::get_demog_wpp(
   year = 2000:2030
 )
 
-# WorldPop single-year age rasters (age 0 is also used as population weights)
+# WorldPop single-year age rasters (age 0 is also used as population
+# weights); years before 2015 come from the legacy 2000-2020 data
 mipR::get_worldpop_single_age(
   country_codes = "NGA",
-  years = 2010:2030,
+  years = 2000:2030,
   ages = 0:15,
   out_dir = here::here("01_data/1b_worldpop/raw")
 )
@@ -51,7 +52,9 @@ aged_pop_admin <- mipR::extract_raster(
   id_cols = c("adm0", "adm1", "adm1_code"),
   pattern = "_age\\d+_\\d{4}\\.tif$"
 ) |>
-  dplyr::rename(pop = sum)
+  dplyr::rename(pop = sum) |>
+  # legacy years refer to 1 July, R2025A years to 1 January
+  dplyr::mutate(ref_date = mipR::worldpop_reference_date(year))
 
 dir.create(
   here::here("01_data/1b_worldpop/processed"),
@@ -60,7 +63,7 @@ dir.create(
 
 saveRDS(
   aged_pop_admin,
-  here::here("01_data/1b_worldpop/processed/nga_aged_pop_2010_2030.rds")
+  here::here("01_data/1b_worldpop/processed/nga_aged_pop_2000_2030.rds")
 )
 
 ## ---------------------------------------------------------------------------##
@@ -114,13 +117,17 @@ cohorts <- mipR::reconstruct_birth_cohorts(
   aged_pop_admin,
   geography = c("adm0", "adm1", "adm1_code"),
   population = "pop",
-  ref_date = "01-01",
+  ref_date = "ref_date",
   method = "constrained",
   mortality = demog$mortality,
   births = demog$rates,
-  start = "2010-01",
+  start = "2000-01",
   end = "2025-12"
 )
+
+# the switch from legacy to R2025A data shows as unexplained change between
+# July 2014 and January 2015
+cohorts$cohort_changes
 
 # population by admin unit, birth month and calendar month
 cohorts$cohorts

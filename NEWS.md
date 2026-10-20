@@ -68,3 +68,8 @@
   of the IHME MCV1 rasters.
 * Added `read_ihme_mcv_admin()` to read the IHME MCV1 and MCV2 coverage
   tables by admin 1 or admin 2 unit into a tidy data frame.
+* `reconstruct_birth_cohorts()` accepts `ref_date` as the name of a column
+  holding each row's reference date, so sources with different reference
+  dates can be combined. `worldpop_reference_date()` gives the date for
+  each WorldPop year: 1 July for the legacy years before 2015 and 1 January
+  from 2015.

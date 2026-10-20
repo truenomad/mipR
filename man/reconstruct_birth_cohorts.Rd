@@ -35,8 +35,12 @@ year of age, such as the output of \code{\link[=extract_raster]{extract_raster()
 
 \item{population}{Name of the population column. Default \code{"pop"}.}
 
-\item{ref_date}{Reference date of the estimates within each year, as
-\code{"MM-DD"}. Default \code{"01-01"}, the WorldPop R2025A reference date.}
+\item{ref_date}{Reference date of the estimates within each year: either
+one \code{"MM-DD"} for every row, or the name of a column of \code{data} holding
+each row's \code{"MM-DD"}. Use a column when sources with different
+reference dates are combined, for example WorldPop legacy years (1
+July) with R2025A years (1 January); \code{\link[=worldpop_reference_date]{worldpop_reference_date()}} fills
+it from the year. Default \code{"01-01"}, the WorldPop R2025A reference date.}
 
 \item{method}{\code{"constrained"} (default), \code{"survival"} or \code{"uniform"}.}
 

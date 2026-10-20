@@ -65,8 +65,12 @@
 #' @param age Name of the column holding age in completed years. Default
 #'   `"age"`.
 #' @param population Name of the population column. Default `"pop"`.
-#' @param ref_date Reference date of the estimates within each year, as
-#'   `"MM-DD"`. Default `"01-01"`, the WorldPop R2025A reference date.
+#' @param ref_date Reference date of the estimates within each year: either
+#'   one `"MM-DD"` for every row, or the name of a column of `data` holding
+#'   each row's `"MM-DD"`. Use a column when sources with different
+#'   reference dates are combined, for example WorldPop legacy years (1
+#'   July) with R2025A years (1 January); [worldpop_reference_date()] fills
+#'   it from the year. Default `"01-01"`, the WorldPop R2025A reference date.
 #' @param method `"constrained"` (default), `"survival"` or `"uniform"`.
 #' @param mortality Data frame with `year`, `age` (single years) and `mx`
 #'   (central death rate), such as `get_demog_wpp()$mortality`. Needed for
@@ -283,10 +287,19 @@ reconstruct_birth_cohorts <- function(
   if (length(missing_cols) > 0) {
     cli::cli_abort("Column{?s} {.val {missing_cols}} not in {.arg data}.")
   }
-  if (!grepl("^\\d{2}-\\d{2}$", ref_date)) {
-    cli::cli_abort(
-      "{.arg ref_date} must be {.val MM-DD}, such as {.val 01-01}."
-    )
+  if (length(ref_date) != 1) {
+    cli::cli_abort("{.arg ref_date} must be a single value.")
+  }
+  ref_values <- if (ref_date %in% names(data)) {
+    as.character(data[[ref_date]])
+  } else {
+    rep(ref_date, nrow(data))
+  }
+  if (anyNA(ref_values) || !all(grepl("^\\d{2}-\\d{2}$", ref_values))) {
+    cli::cli_abort(paste0(
+      "{.arg ref_date} must be {.val MM-DD}, such as {.val 01-01}, or a ",
+      "column of {.arg data} holding {.val MM-DD} values."
+    ))
   }
 
   ages <- data[[age]]
@@ -295,7 +308,7 @@ reconstruct_birth_cohorts <- function(
   }
 
   out <- data[, geography, drop = FALSE]
-  out$ref_date <- .as_date(paste0(data[[year]], "-", ref_date), "ref_date")
+  out$ref_date <- .as_date(paste0(data[[year]], "-", ref_values), "ref_date")
   out$age_lower <- as.integer(data[[age]]) * 12L
   out$age_upper <- out$age_lower + 12L
   out$population <- as.numeric(data[[population]])
