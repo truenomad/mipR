@@ -46,25 +46,36 @@ mipR::get_worldpop_single_age(
 # Population by age and admin unit ---------------------------------------------
 ## ---------------------------------------------------------------------------##
 
-aged_pop_admin <- mipR::extract_raster(
-  rasters = here::here("01_data/1b_worldpop/raw"),
-  shapefile = shp,
-  id_cols = c("adm0", "adm1", "adm1_code"),
-  pattern = "_age\\d+_\\d{4}\\.tif$"
-) |>
-  dplyr::rename(pop = sum) |>
-  # legacy years refer to 1 July, R2025A years to 1 January
+# set up pop paths
+pop_path <- here::here(
+  "01_data/1b_worldpop/processed/nga_aged_pop_2000_2030.rds"
+)
+
+if (file.exists(pop_path)) {
+  # read file
+  aged_pop_admin <- readRDS(pop_path)
+} else {
+  # extract pop
+  aged_pop_admin <- mipR::extract_raster(
+    rasters = here::here("01_data/1b_worldpop/raw"),
+    shapefile = shp,
+    id_cols = c("adm0", "adm1", "adm1_code"),
+    pattern = "_age\\d+_\\d{4}\\.tif$"
+  ) |>
+    dplyr::rename(pop = sum)
+
+  # save extracted df
+  dir.create(dirname(pop_path), recursive = TRUE, showWarnings = FALSE)
+  saveRDS(
+    aged_pop_admin,
+    pop_path
+  )
+}
+
+# reference date of each year: legacy years refer to 1 July, R2025A years
+# to 1 January
+aged_pop_admin <- aged_pop_admin |>
   dplyr::mutate(ref_date = mipR::worldpop_reference_date(year))
-
-dir.create(
-  here::here("01_data/1b_worldpop/processed"),
-  recursive = TRUE, showWarnings = FALSE
-)
-
-saveRDS(
-  aged_pop_admin,
-  here::here("01_data/1b_worldpop/processed/nga_aged_pop_2000_2030.rds")
-)
 
 ## ---------------------------------------------------------------------------##
 # MCV1 coverage by admin unit --------------------------------------------------
@@ -72,7 +83,9 @@ saveRDS(
 
 # weighted by the under-one population of the same year (or the nearest)
 mcv1 <- mipR::extract_raster(
-  rasters = here::here("01_data/1c_ihme/raw/mcv1_coverage_mean_2000_2025.tif"),
+  rasters = here::here(
+    "01_data/1c_ihme/raw/mcv1_coverage_mean_2000_2025.tif"
+  ),
   shapefile = shp,
   id_cols = c("adm0", "adm1", "adm1_code"),
   fun = c("mean", "weighted_mean"),
@@ -125,12 +138,13 @@ cohorts <- mipR::reconstruct_birth_cohorts(
   end = "2025-12"
 )
 
-# the switch from legacy to R2025A data shows as unexplained change between
-# July 2014 and January 2015
-cohorts$cohort_changes
-
 # population by admin unit, birth month and calendar month
 cohorts$cohorts
 
 # anchors outside the 5% tolerance, for review
 cohorts$anchor_check[!cohorts$anchor_check$within_tolerance, ]
+
+# change in each cohort between anchors that mortality does not explain;
+# the switch from legacy to R2025A data shows between July 2014 and
+# January 2015
+cohorts$cohort_changes
