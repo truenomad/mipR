@@ -872,9 +872,10 @@ plot_cohort_journey <- function(
 #' `sntutils::facetted_map_bins()` or `sntutils::facetted_map_gradient()`.
 #'
 #' @details
-#' By default the scale comes from the data being mapped: bins at
-#' `pretty()` breaks from 0 to the highest share, or a gradient from 0 to
-#' the same upper bound. Pass `breaks` (bins) or `limits` (gradient) to fix
+#' By default the scale comes from the data being mapped: bins of 0-5,
+#' 5-10 and 10-20%, then steps of 20 points up to the highest share, or a
+#' gradient from 0 to the same upper bound. The lightest colour is used
+#' only for a bin below 5%. Pass `breaks` (bins) or `limits` (gradient) to fix
 #' the scale, for example so that several maps or rounds share one scale.
 #' Bin colours are tied to their bin, so a bin with no areas does not shift
 #' the others.
@@ -1006,8 +1007,7 @@ map_immunity <- function(
   }
 
   if (is.null(breaks)) {
-    breaks <- pretty(c(0, scale_top))
-    breaks <- breaks[breaks < scale_top]
+    breaks <- .default_breaks(scale_top)
   }
   bands <- .percent_bands(breaks, get_palette(palette))
   data <- data |>
@@ -1047,15 +1047,33 @@ map_immunity <- function(
 # the palette and named by bin so colours stay with their bin
 #' @noRd
 .percent_bands <- function(breaks, colours) {
-  upper <- c(breaks[-1], NA)
   ramp <- grDevices::colorRampPalette(colours)(101)
-  position <- (seq_along(breaks) - 1) / max(length(breaks) - 1, 1)
-  dplyr::tibble(
-    label = dplyr::if_else(
-      is.na(upper),
-      paste0(breaks, "% or more"),
-      paste0(breaks, "-", upper, "%")
-    ),
-    colour = ramp[round(position * 100) + 1]
-  )
+  dplyr::tibble(lower = breaks, upper = c(breaks[-1], NA)) |>
+    dplyr::mutate(
+      label = dplyr::if_else(
+        is.na(.data$upper),
+        paste0(.data$lower, "% or more"),
+        paste0(.data$lower, "-", .data$upper, "%")
+      ),
+      # the lightest colour is kept for a bin below 5%; the other bins
+      # spread over the rest of the palette
+      lightest = !is.na(.data$upper) & .data$upper <= 5,
+      step = cumsum(!.data$lightest),
+      position = dplyr::if_else(
+        .data$lightest,
+        0,
+        0.15 + 0.85 * (.data$step - 1) / max(max(.data$step) - 1, 1)
+      ),
+      colour = ramp[round(.data$position * 100) + 1]
+    ) |>
+    dplyr::select("label", "colour")
+}
+
+# internal helper: default bins in percent. finer below 20% (0-5, 5-10,
+# 10-20), then steps of 20 up to the top of the scale
+#' @noRd
+.default_breaks <- function(scale_top) {
+  c(0, 5, 10, seq(20, scale_top, by = 20)) |>
+    unique() |>
+    purrr::keep(\(b) b < scale_top)
 }

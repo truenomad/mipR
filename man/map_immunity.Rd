@@ -79,9 +79,10 @@ Draws choropleth maps of the susceptible share from
 \code{sntutils::facetted_map_bins()} or \code{sntutils::facetted_map_gradient()}.
 }
 \details{
-By default the scale comes from the data being mapped: bins at
-\code{pretty()} breaks from 0 to the highest share, or a gradient from 0 to
-the same upper bound. Pass \code{breaks} (bins) or \code{limits} (gradient) to fix
+By default the scale comes from the data being mapped: bins of 0-5,
+5-10 and 10-20\%, then steps of 20 points up to the highest share, or a
+gradient from 0 to the same upper bound. The lightest colour is used
+only for a bin below 5\%. Pass \code{breaks} (bins) or \code{limits} (gradient) to fix
 the scale, for example so that several maps or rounds share one scale.
 Bin colours are tied to their bin, so a bin with no areas does not shift
 the others.

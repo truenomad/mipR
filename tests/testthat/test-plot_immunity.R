@@ -49,6 +49,20 @@ testthat::test_that("plot_cohort_protection orders rows and marks targets", {
   testthat::expect_true(file.exists(path))
 })
 
+testthat::test_that("default bins split 0-20% and keep white below 5%", {
+  testthat::expect_identical(.default_breaks(100), c(0, 5, 10, 20, 40, 60, 80))
+  testthat::expect_identical(.default_breaks(20), c(0, 5, 10))
+
+  colours <- get_palette("susceptibility")
+  bands <- .percent_bands(c(0, 5, 10, 20), colours)
+  testthat::expect_identical(bands$colour[1], colours[1])
+  testthat::expect_false(colours[1] %in% bands$colour[-1])
+
+  # no bin below 5%, so no bin is white
+  wide <- .percent_bands(c(0, 20, 40), colours)
+  testthat::expect_false(colours[1] %in% wide$colour)
+})
+
 testthat::test_that(".percent_bands names colours by bin", {
   colours <- get_palette("susceptibility")
   bands <- .percent_bands(c(0, 20, 40), colours)
@@ -56,7 +70,7 @@ testthat::test_that(".percent_bands names colours by bin", {
   testthat::expect_identical(
     bands$label, c("0-20%", "20-40%", "40% or more")
   )
-  testthat::expect_identical(bands$colour[1], colours[1])
+  testthat::expect_false(bands$colour[1] == colours[1])
   testthat::expect_identical(bands$colour[3], colours[length(colours)])
 })
 
