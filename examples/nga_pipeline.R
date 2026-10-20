@@ -42,6 +42,14 @@ mipR::get_worldpop_single_age(
   out_dir = here::here("01_data/1b_worldpop/raw")
 )
 
+# WorldPop total population rasters, kept apart from the age rasters; the
+# population aged 15 and over is the total less ages 0 to 14
+mipR::get_worldpop(
+  country_codes = "NGA",
+  years = 2000:2030,
+  dest_dir = here::here("01_data/1b_worldpop/raw_total")
+)
+
 ## ---------------------------------------------------------------------------##
 # Population by age and admin unit ---------------------------------------------
 ## ---------------------------------------------------------------------------##
@@ -76,6 +84,69 @@ if (file.exists(pop_path)) {
 # to 1 January
 aged_pop_admin <- aged_pop_admin |>
   dplyr::mutate(ref_date = mipR::worldpop_reference_date(year))
+
+## ---------------------------------------------------------------------------##
+# Population by broad age band -------------------------------------------------
+## ---------------------------------------------------------------------------##
+
+# total population by admin unit and year
+total_pop_path <- here::here(
+  "01_data/1b_worldpop/processed/nga_total_pop_2000_2030.rds"
+)
+
+if (file.exists(total_pop_path)) {
+  total_pop_admin <- readRDS(total_pop_path)
+} else {
+  total_pop_admin <- mipR::extract_raster(
+    rasters = here::here("01_data/1b_worldpop/raw_total"),
+    shapefile = shp,
+    id_cols = c("adm0", "adm1", "adm1_code")
+  ) |>
+    dplyr::select("adm0", "adm1", "adm1_code", "year", total_pop = "sum")
+
+  saveRDS(total_pop_admin, total_pop_path)
+}
+
+# under 5, 5-9 and 10-14 from the single-year ages, and 15 and over as the
+# total less ages 0 to 14
+pop_bands <- aged_pop_admin |>
+  dplyr::filter(age < 15) |>
+  dplyr::mutate(
+    age_band = dplyr::case_when(
+      age < 5 ~ "<5",
+      age < 10 ~ "5-9",
+      TRUE ~ "10-14"
+    )
+  ) |>
+  dplyr::summarise(
+    pop = sum(pop),
+    .by = c("adm0", "adm1", "adm1_code", "year", "age_band")
+  )
+
+pop_15_plus <- pop_bands |>
+  dplyr::summarise(
+    pop_u15 = sum(pop),
+    .by = c("adm0", "adm1", "adm1_code", "year")
+  ) |>
+  dplyr::left_join(
+    total_pop_admin,
+    by = c("adm0", "adm1", "adm1_code", "year")
+  ) |>
+  dplyr::transmute(
+    adm0, adm1, adm1_code, year,
+    age_band = "15+",
+    pop = total_pop - pop_u15
+  )
+
+pop_bands <- dplyr::bind_rows(pop_bands, pop_15_plus) |>
+  dplyr::mutate(
+    age_band = factor(age_band, levels = c("<5", "5-9", "10-14", "15+"))
+  ) |>
+  dplyr::arrange(adm1, year, age_band)
+
+# a negative 15+ count means the age rasters and the total disagree
+pop_bands |>
+  dplyr::filter(age_band == "15+", pop < 0)
 
 ## ---------------------------------------------------------------------------##
 # MCV1 coverage by admin unit --------------------------------------------------
@@ -222,8 +293,13 @@ immunity <- mipR::estimate_immunity(
 checks <- mipR::check_immunity(immunity, campaigns)
 checks$summary
 
-# susceptible children by state and age band in mid-2025
-summary_2025 <- mipR::summarise_immunity(immunity, at = "2025-06")
+# susceptible children by state in mid-2025, in the same bands as
+# pop_bands; the profile does not cover ages 15 and over
+summary_2025 <- mipR::summarise_immunity(
+  immunity,
+  at = "2025-06",
+  age_breaks = c(0, 60, 120)
+)
 
 # intervals from the IHME and survey coverage bounds
 draws_2025 <- mipR::immunity_draws(
@@ -256,8 +332,8 @@ mipR::map_immunity(
   summary_2025, shp,
   type = "bins",
   palette = "susceptibility",
-  ncol = 4,
+  ncol = 3,
   output_file = here::here("03_outputs/plots/nga_susceptible_map.png"),
-  width = 12, height = 4.5
+  width = 10, height = 4.5
 )
 
