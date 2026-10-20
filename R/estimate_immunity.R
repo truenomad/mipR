@@ -328,12 +328,9 @@ ve_cdc <- function(
       coverage = numeric(0)
     )
   }
-  if (!"coupling" %in% names(events)) {
-    events$coupling <- NA_character_
-  }
-
   default_coupling <- coupling
   events <- events |>
+    dplyr::mutate(coupling = .optional_column(events, "coupling")) |>
     dplyr::filter(.data$coverage > 0, .data$eligible_share > 0) |>
     dplyr::mutate(
       coupling = dplyr::coalesce(.data$coupling, default_coupling),
@@ -511,13 +508,13 @@ immunity_draws <- function(
 
   set.seed(seed)
   draws <- purrr::map(seq_len(n_draws), \(d) {
-    drawn <- history
-    drawn$history <- .draw_coverage(history$history, geography,
-                                     rho_years, rho_doses)
-    run <- .run_engine(
-      drawn$cells, drawn$history, coupling, ve, max_doses = 8L
+    drawn_events <- .draw_coverage(
+      history$history, geography, rho_years, rho_doses
     )
-    .monthly_values(panel, drawn$cells, run$steps, geography) |>
+    run <- .run_engine(
+      history$cells, drawn_events, coupling, ve, max_doses = 8L
+    )
+    .monthly_values(panel, history$cells, run$steps, geography) |>
       dplyr::mutate(
         susceptible = .data$susceptible_share * .data$population,
         maternal_protection = .data$age_months < maternal_months
