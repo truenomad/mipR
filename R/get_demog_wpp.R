@@ -59,79 +59,80 @@ get_demog_wpp <- function(country, year) {
     cli::cli_abort("{.arg country} must be a single country.")
   }
 
-  # estimates run to 2023; projections (medium variant) from 2024
+  # estimates run to 2023; projections (medium variant) from 2024. the
+  # projections store year as text, so years are made integer
   pop_cols <- c("country_code", "name", "year", "age", "pop")
-  pop_age <- rbind(
-    .load_wpp("popAge1dt")[, pop_cols],
-    .load_wpp("popprojAge1dt")[, pop_cols]
-  )
+  pop_age <- .load_wpp_years(c("popAge1dt", "popprojAge1dt"), pop_cols)
   misc_cols <- c("country_code", "name", "year", "births", "cbr", "cdr")
-  misc <- rbind(
-    .load_wpp("misc1dt")[, misc_cols],
-    .load_wpp("miscproj1dt")[, misc_cols]
-  )
+  misc <- .load_wpp_years(c("misc1dt", "miscproj1dt"), misc_cols)
 
-  locations <- unique(pop_age[, c("country_code", "name")])
+  locations <- pop_age |>
+    dplyr::select("country_code", "name") |>
+    dplyr::distinct()
   country_name <- .match_wpp_country(country, locations)
-  pop_age <- pop_age[pop_age$name == country_name, ]
-  misc <- misc[misc$name == country_name, ]
-  mx <- .load_wpp("mx1dt")
-  mx <- mx[mx$name == country_name, c("year", "age", "mxB")]
-  iso3 <- suppressWarnings(countrycode::countrycode(
-    pop_age$country_code[1], "un", "iso3c",
+  country_label <- toupper(country_name)
+  pop_age <- dplyr::filter(pop_age, .data$name == country_name)
+  misc <- dplyr::filter(misc, .data$name == country_name)
+  mx <- .load_wpp("mx1dt") |>
+    dplyr::filter(.data$name == country_name) |>
+    dplyr::select("year", "age", "mxB")
+  iso3_code <- suppressWarnings(countrycode::countrycode(
+    dplyr::first(pop_age$country_code), "un", "iso3c",
     custom_match = stats::setNames(names(.wpp_extra_m49), .wpp_extra_m49)
   ))
 
   available_years <- intersect(unique(pop_age$year), unique(misc$year))
-  years_used <- vapply(
-    year,
-    function(yr) {
-      if (yr %in% available_years) {
-        return(as.integer(yr))
-      }
-      closest <- as.integer(.closest_year(available_years, yr))
-      cli::cli_alert_warning("Year {yr} not available. Using {closest}")
-      closest
-    },
-    integer(1)
-  )
+  years_used <- purrr::map_int(year, \(yr) {
+    if (yr %in% available_years) {
+      return(as.integer(yr))
+    }
+    closest <- as.integer(.closest_year(available_years, yr))
+    cli::cli_alert_warning("Year {yr} not available. Using {closest}")
+    closest
+  })
 
-  rates <- misc[match(years_used, misc$year), ]
-  rates <- data.frame(
-    country = toupper(country_name),
-    iso3 = iso3,
-    year = years_used,
-    births = rates$births * 1000,
-    crude_birth_rate = rates$cbr,
-    crude_death_rate = rates$cdr,
-    birth_rate_daily = rates$cbr / 1000 / 365
-  )
-
-  age_distribution <- do.call(rbind, lapply(years_used, function(yr) {
-    age_data <- pop_age[pop_age$year == yr, ]
-    age_data <- age_data[order(age_data$age), ]
-    proportion <- age_data$pop / sum(age_data$pop)
-    data.frame(
-      country = toupper(country_name),
-      iso3 = iso3,
-      year = yr,
-      age = as.integer(age_data$age),
-      proportion = proportion,
-      cumulative_proportion = cumsum(proportion),
-      age_days = (age_data$age + 1) * 365
+  # the first row of each year, in the order the years were asked for
+  misc_by_year <- misc |>
+    dplyr::mutate(year = as.integer(.data$year)) |>
+    dplyr::distinct(dplyr::pick("year"), .keep_all = TRUE)
+  rates <- dplyr::tibble(year = years_used) |>
+    dplyr::left_join(misc_by_year, by = "year", relationship = "many-to-one") |>
+    dplyr::transmute(
+      country = country_label,
+      iso3 = iso3_code,
+      year = .data$year,
+      births = .data$births * 1000,
+      crude_birth_rate = .data$cbr,
+      crude_death_rate = .data$cdr,
+      birth_rate_daily = .data$cbr / 1000 / 365
     )
-  }))
-  rownames(age_distribution) <- NULL
 
-  mx <- mx[mx$year %in% years_used, ]
-  mx <- mx[order(mx$year, mx$age), ]
-  mortality <- data.frame(
-    country = toupper(country_name),
-    iso3 = iso3,
-    year = as.integer(mx$year),
-    age = as.integer(mx$age),
-    mx = mx$mxB
-  )
+  age_distribution <- purrr::map(years_used, \(yr) {
+    pop_age |>
+      dplyr::filter(.data$year == yr) |>
+      dplyr::arrange(.data$age) |>
+      dplyr::transmute(
+        country = country_label,
+        iso3 = iso3_code,
+        year = yr,
+        age = as.integer(.data$age),
+        proportion = .data$pop / sum(.data$pop),
+        cumulative_proportion = cumsum(.data$proportion),
+        age_days = (.data$age + 1) * 365
+      )
+  }) |>
+    purrr::list_rbind()
+
+  mortality <- mx |>
+    dplyr::filter(.data$year %in% years_used) |>
+    dplyr::arrange(.data$year, .data$age) |>
+    dplyr::transmute(
+      country = country_label,
+      iso3 = iso3_code,
+      year = as.integer(.data$year),
+      age = as.integer(.data$age),
+      mx = .data$mxB
+    )
 
   cli::cli_alert_success(
     "{country_name}: WPP 2024 rates, age distribution and mortality for \\
@@ -145,13 +146,26 @@ get_demog_wpp <- function(country, year) {
   )
 }
 
-# internal helper: load one wpp2024 dataset as a data frame. the data files
+# internal helper: load one wpp2024 dataset as a tibble. the data files
 # are R scripts, so the environment needs base functions
 #' @noRd
 .load_wpp <- function(name) {
   env <- new.env(parent = baseenv())
   utils::data(list = name, package = "wpp2024", envir = env)
-  as.data.frame(env[[name]])
+  dplyr::as_tibble(env[[name]])
+}
+
+# internal helper: several wpp2024 datasets stacked, with the given columns
+# and year as integer
+#' @noRd
+.load_wpp_years <- function(names, cols) {
+  names |>
+    purrr::map(\(name) {
+      .load_wpp(name) |>
+        dplyr::select(dplyr::all_of(cols)) |>
+        dplyr::mutate(year = as.integer(.data$year))
+    }) |>
+    purrr::list_rbind()
 }
 
 # WPP locations that have no UN M49 code in countrycode
@@ -168,14 +182,16 @@ get_demog_wpp <- function(country, year) {
         custom_match = .wpp_extra_m49
       )
     )
-    matched <- locations$name[locations$country_code %in% m49]
+    matched <- locations |>
+      dplyr::filter(.data$country_code %in% m49) |>
+      dplyr::pull(.data$name)
     if (length(matched) > 0) {
       return(matched[1])
     }
   }
 
   available <- locations$name
-  matched <- available[tolower(available) == tolower(country)]
+  matched <- purrr::keep(available, \(x) tolower(x) == tolower(country))
   if (length(matched) > 0) {
     return(matched[1])
   }

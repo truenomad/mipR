@@ -123,90 +123,119 @@ extract_raster <- function(
   }
 
   rasters <- .list_rasters(rasters, pattern, "rasters")
-  file_info <- .raster_file_info(rasters)
-  ids <- sf::st_drop_geometry(shapefile)[, id_cols, drop = FALSE]
+  file_info <- dplyr::as_tibble(.raster_file_info(rasters))
+  ids <- shapefile |>
+    sf::st_drop_geometry() |>
+    dplyr::as_tibble() |>
+    dplyr::select(dplyr::all_of(id_cols))
 
   pop <- NULL
   if (!is.null(pop_rasters)) {
     pop_files <- .list_rasters(pop_rasters, pop_pattern, "pop_rasters")
     pop <- list(
       files = pop_files,
-      years = .raster_file_info(pop_files)$year,
-      substituted = character(0)
+      years = purrr::pluck(
+        .raster_file_info(pop_files), "year",
+        .default = NA_integer_
+      )
     )
   }
-  plain <- setdiff(fun, weighted_funs)
 
-  results <- lapply(seq_along(rasters), function(i) {
+  out <- purrr::map(seq_along(rasters), \(i) {
     if (!quiet) {
       cli::cli_alert_info("Extracting {basename(rasters[i])}")
     }
-    r <- terra::rast(rasters[i])
-    shp <- shapefile
-    if (sf::st_crs(shp) != sf::st_crs(terra::crs(r))) {
-      shp <- sf::st_transform(shp, terra::crs(r))
+    .extract_file(
+      rasters[i], dplyr::slice(file_info, i), shapefile, ids, fun, pop
+    )
+  }) |>
+    purrr::list_rbind()
+
+  # substitutions are collected from every layer and reported once
+  if (!is.null(pop)) {
+    substituted <- out$.pop_note |>
+      purrr::discard(is.na) |>
+      unique()
+    if (length(substituted) > 0) {
+      cli::cli_warn(c(
+        "No population raster for some years; the nearest year was used.",
+        "i" = "{substituted}"
+      ))
     }
-    r <- terra::crop(r, terra::vect(shp), snap = "out")
-    layer_years <- .layer_years(names(r), basename(rasters[i]))
-
-    layers <- lapply(seq_len(terra::nlyr(r)), function(k) {
-      info <- file_info[rep(i, nrow(ids)), , drop = FALSE]
-      layer_year <- layer_years[k]
-      year_k <- if (!is.na(layer_year)) layer_year else info$year[1]
-      if (is.null(year_k)) {
-        year_k <- NA_integer_
-      }
-
-      stats <- data.frame(row.names = seq_len(nrow(ids)))
-      if (length(plain) > 0) {
-        stats <- exactextractr::exact_extract(
-          r[[k]], shp,
-          fun = plain, force_df = TRUE, progress = FALSE
-        )
-        names(stats) <- plain
-      }
-      if (!is.null(pop)) {
-        pop_file <- .match_pop_raster(pop, year_k)
-        if (!is.na(year_k) && !is.na(pop_file$year) &&
-              pop_file$year != year_k) {
-          pop$substituted <<- unique(c(
-            pop$substituted, paste0(year_k, " used ", pop_file$year)
-          ))
-        }
-        weighted <- .weighted_stats(r[[k]], shp, pop_file$path, fun)
-        stats <- cbind(stats, weighted)
-      }
-      if ("sum" %in% names(stats)) {
-        stats$sum <- round(stats$sum)
-      }
-
-      out <- cbind(ids, info, stats)
-      if (terra::nlyr(r) > 1) {
-        out$layer <- names(r)[k]
-        if (!is.na(layer_year)) {
-          out$year <- layer_year
-        }
-      }
-      out
-    })
-    do.call(rbind, layers)
-  })
-
-  if (!is.null(pop) && length(pop$substituted) > 0) {
-    cli::cli_warn(c(
-      "No population raster for some years; the nearest year was used.",
-      "i" = "{pop$substituted}"
-    ))
   }
 
-  out <- do.call(rbind, .fill_columns(results))
-  rownames(out) <- NULL
   front <- intersect(
     c(id_cols, "year", "month", "age", "layer"),
     names(out)
   )
   stat_cols <- c(fun, if (!is.null(pop)) "pop_sum")
-  out[, c(front, stat_cols), drop = FALSE]
+  dplyr::select(out, dplyr::all_of(c(front, stat_cols)))
+}
+
+# internal helper: every layer of one raster file over the polygons, one
+# row per polygon and layer
+#' @noRd
+.extract_file <- function(path, info, shapefile, ids, fun, pop) {
+  r <- terra::rast(path)
+  shp <- shapefile
+  if (sf::st_crs(shp) != sf::st_crs(terra::crs(r))) {
+    shp <- sf::st_transform(shp, terra::crs(r))
+  }
+  r <- terra::crop(r, terra::vect(shp), snap = "out")
+  layer_years <- .layer_years(names(r), basename(path))
+  file_year <- purrr::pluck(info, "year", 1, .default = NA_integer_)
+  info_rows <- dplyr::slice(info, rep(1L, nrow(ids)))
+
+  purrr::map(seq_len(terra::nlyr(r)), \(k) {
+    layer_year <- layer_years[k]
+    year_k <- if (!is.na(layer_year)) layer_year else file_year
+    layer <- terra::subset(r, k)
+
+    stats <- .layer_stats(layer, shp, nrow(ids), fun, pop, year_k)
+    out <- dplyr::bind_cols(ids, info_rows, stats)
+    if (terra::nlyr(r) > 1) {
+      layer_name <- names(r)[k]
+      out <- dplyr::mutate(out, layer = layer_name)
+      if (!is.na(layer_year)) {
+        out <- dplyr::mutate(out, year = layer_year)
+      }
+    }
+    out
+  }) |>
+    purrr::list_rbind()
+}
+
+# internal helper: the plain and population-weighted statistics of one
+# layer, with a note when the nearest population year was used
+#' @noRd
+.layer_stats <- function(layer, shp, n_polygons, fun, pop, year_k) {
+  plain <- setdiff(fun, c("weighted_mean", "weighted_median"))
+  stats <- dplyr::tibble(.rows = n_polygons)
+  if (length(plain) > 0) {
+    stats <- exactextractr::exact_extract(
+      layer, shp,
+      fun = plain, force_df = TRUE, progress = FALSE
+    ) |>
+      dplyr::as_tibble() |>
+      purrr::set_names(plain)
+  }
+  if (!is.null(pop)) {
+    pop_file <- .match_pop_raster(pop, year_k)
+    pop_note <- NA_character_
+    if (!is.na(year_k) && !is.na(pop_file$year) &&
+          pop_file$year != year_k) {
+      pop_note <- paste0(year_k, " used ", pop_file$year)
+    }
+    stats <- dplyr::bind_cols(
+      stats,
+      .weighted_stats(layer, shp, pop_file$path, fun),
+      .pop_note = pop_note
+    )
+  }
+  if ("sum" %in% names(stats)) {
+    stats <- dplyr::mutate(stats, sum = round(.data$sum))
+  }
+  stats
 }
 
 # internal helper: raster files from paths, or from a directory by pattern
@@ -220,7 +249,7 @@ extract_raster <- function(
       "No raster files found for {.arg {arg}} matching {.val {pattern}}."
     )
   }
-  missing_files <- x[!file.exists(x)]
+  missing_files <- purrr::discard(x, file.exists)
   if (length(missing_files) > 0) {
     cli::cli_abort("Raster file{?s} not found: {.file {missing_files}}")
   }
@@ -232,7 +261,7 @@ extract_raster <- function(
 #' @noRd
 .match_pop_raster <- function(pop, year) {
   if (length(pop$files) == 1) {
-    return(list(path = pop$files, year = pop$years[1]))
+    return(list(path = pop$files, year = dplyr::first(pop$years)))
   }
   years <- pop$years
   if (is.null(years) || anyNA(years)) {
@@ -242,7 +271,7 @@ extract_raster <- function(
     ))
   }
   if (anyDuplicated(years)) {
-    dup <- unique(years[duplicated(years)])
+    dup <- unique(purrr::keep(years, duplicated(years)))
     cli::cli_abort(c(
       "Several population rasters share year{?s} {dup}.",
       "i" = "Use {.arg pop_pattern} to keep one raster per year."
@@ -262,15 +291,14 @@ extract_raster <- function(
 # population summed onto the value grid, and the polygon population
 #' @noRd
 .weighted_stats <- function(layer, shp, pop_path, fun) {
-  pop <- terra::rast(pop_path)[[1]]
+  pop <- terra::subset(terra::rast(pop_path), 1)
   shp_pop <- shp
   if (sf::st_crs(shp_pop) != sf::st_crs(terra::crs(pop))) {
     shp_pop <- sf::st_transform(shp_pop, terra::crs(pop))
   }
   pop <- terra::crop(pop, terra::vect(shp_pop), snap = "out")
 
-  out <- data.frame(row.names = seq_len(nrow(shp)))
-  out$pop_sum <- round(exactextractr::exact_extract(
+  pop_sum <- round(exactextractr::exact_extract(
     pop, shp_pop, fun = "sum", progress = FALSE
   ))
 
@@ -280,74 +308,73 @@ extract_raster <- function(
   }
   weights <- terra::resample(weights, layer, method = "sum")
 
-  if ("weighted_mean" %in% fun) {
-    out$weighted_mean <- suppressWarnings(exactextractr::exact_extract(
+  wanted <- intersect(fun, c("weighted_mean", "weighted_median"))
+  weighted <- purrr::map(purrr::set_names(wanted), \(stat) {
+    stat_fun <- if (stat == "weighted_mean") {
+      "weighted_mean"
+    } else {
+      \(values, coverage_fractions, weights) {
+        .weighted_median(values, weights * coverage_fractions)
+      }
+    }
+    suppressWarnings(exactextractr::exact_extract(
       layer, shp,
-      fun = "weighted_mean", weights = weights, default_weight = 0,
+      fun = stat_fun, weights = weights, default_weight = 0,
       progress = FALSE
     ))
-  }
-  if ("weighted_median" %in% fun) {
-    out$weighted_median <- suppressWarnings(exactextractr::exact_extract(
-      layer, shp,
-      fun = function(values, coverage_fractions, weights) {
-        .weighted_median(values, weights * coverage_fractions)
-      },
-      weights = weights, default_weight = 0, progress = FALSE
-    ))
-  }
-  out[, c(intersect(fun, c("weighted_mean", "weighted_median")), "pop_sum"),
-      drop = FALSE]
+  })
+  dplyr::tibble(!!!weighted, pop_sum = pop_sum)
 }
 
 # internal helper: the value below which half of the total weight lies
 #' @noRd
 .weighted_median <- function(values, weights) {
-  keep <- !is.na(values) & !is.na(weights) & weights > 0
-  if (!any(keep)) {
-    return(NA_real_)
-  }
-  values <- values[keep]
-  weights <- weights[keep]
-  ord <- order(values)
-  cumulative <- cumsum(weights[ord]) / sum(weights)
-  values[ord][which(cumulative >= 0.5)[1]]
+  dplyr::tibble(value = values, weight = weights) |>
+    dplyr::filter(
+      !is.na(.data$value), !is.na(.data$weight), .data$weight > 0
+    ) |>
+    dplyr::arrange(.data$value) |>
+    dplyr::mutate(cumulative = cumsum(.data$weight) / sum(.data$weight)) |>
+    dplyr::filter(.data$cumulative >= 0.5) |>
+    dplyr::pull(.data$value) |>
+    dplyr::first(default = NA_real_)
 }
 
 # internal helper: year, month and age read from each filename. returns a
-# data frame with one row per file and only the columns that apply
+# plain data frame with one row per file and only the columns that apply,
+# so absent columns read as NULL
 #' @noRd
 .raster_file_info <- function(files) {
-  names <- tools::file_path_sans_ext(basename(files))
-  info <- data.frame(row.names = seq_along(files))
+  stems <- tools::file_path_sans_ext(basename(files))
+  ages <- purrr::map_int(stems, \(stem) {
+    age <- regmatches(stem, regexpr("(?<=age)\\d+", stem, perl = TRUE))
+    if (length(age) == 0) NA_integer_ else as.integer(age)
+  })
 
   # drop age tokens and worldpop group codes so they are not read as dates
-  has_age <- grepl("age\\d+", names, perl = TRUE)
-  age <- rep(NA_integer_, length(names))
-  age[has_age] <- as.integer(
-    regmatches(names, regexpr("(?<=age)\\d+", names, perl = TRUE))
-  )
-  names <- gsub("age\\d+", "", names, perl = TRUE)
-  names <- gsub("_[mft]_\\d{1,2}_", "_", names, perl = TRUE)
+  stems <- gsub("age\\d+", "", stems, perl = TRUE)
+  stems <- gsub("_[mft]_\\d{1,2}_", "_", stems, perl = TRUE)
 
   # shared numbers such as version stamps are dropped only when they get in
   # the way, since a shared month is also a shared number
-  pattern <- tryCatch(.detect_time_pattern(names), error = function(e) NULL)
+  pattern <- tryCatch(.detect_time_pattern(stems), error = \(e) NULL)
   if (is.null(pattern)) {
-    names <- .drop_common_numbers(names)
-    pattern <- .detect_time_pattern(names)
+    stems <- .drop_common_numbers(stems)
+    pattern <- .detect_time_pattern(stems)
   }
+
+  info <- dplyr::tibble(.rows = length(files))
   if (pattern != "none") {
-    dates <- lapply(names, .parse_date, pattern = pattern)
-    info$year <- vapply(dates, function(d) d[["year"]], integer(1))
+    dates <- purrr::map(stems, \(stem) .parse_date(stem, pattern))
+    info <- dplyr::mutate(info, year = purrr::map_int(dates, "year"))
     if (pattern %in% c("monthly", "daily")) {
-      info$month <- vapply(dates, function(d) d[["month"]], integer(1))
+      info <- dplyr::mutate(info, month = purrr::map_int(dates, "month"))
     }
   }
-  if (any(has_age)) {
-    info$age <- age
+  if (any(!is.na(ages))) {
+    info <- dplyr::mutate(info, age = ages)
   }
-  info
+  as.data.frame(info)
 }
 
 # internal helper: remove standalone numbers that appear in more than half
@@ -358,9 +385,16 @@ extract_raster <- function(
     names,
     gregexpr("(?<![A-Za-z0-9])\\d+(?![A-Za-z0-9])", names, perl = TRUE)
   )
-  freq <- table(unlist(lapply(numbers, unique)))
-  common <- names(freq[freq > length(names) / 2])
-  common <- common[!grepl("^(19[89]\\d|20\\d{2})$", common)]
+  half_names <- length(names) / 2
+  common <- dplyr::tibble(
+    number = purrr::list_c(purrr::map(numbers, unique), ptype = character())
+  ) |>
+    dplyr::count(.data$number) |>
+    dplyr::filter(
+      .data$n > half_names,
+      !grepl("^(19[89]\\d|20\\d{2})$", .data$number)
+    ) |>
+    dplyr::pull(.data$number)
   if (length(common) == 0) {
     return(names)
   }
@@ -415,7 +449,8 @@ extract_raster <- function(
   ))
 }
 
-# internal helper: year and month from one name for a known pattern
+# internal helper: year and month from one name for a known pattern. the
+# first format that matches is used
 #' @noRd
 .parse_date <- function(name, pattern) {
   p <- .date_patterns
@@ -424,35 +459,33 @@ extract_raster <- function(
   }
 
   formats <- if (pattern == "daily") {
-    list(c(p$daily, 1, 2))
+    list(list(regex = p$daily, year = 1, month = 2))
   } else {
     list(
-      c(p$monthly_iso, 1, 2),
-      c(p$monthly_compact, 1, 2),
-      c(p$monthly_euro, 2, 1)
+      list(regex = p$monthly_iso, year = 1, month = 2),
+      list(regex = p$monthly_compact, year = 1, month = 2),
+      list(regex = p$monthly_euro, year = 2, month = 1)
     )
   }
-  for (f in formats) {
-    m <- regmatches(name, regexec(f[1], name, perl = TRUE))[[1]]
-    if (length(m) > 0) {
-      parts <- m[-1]
-      return(list(
-        year = as.integer(parts[as.integer(f[2])]),
-        month = as.integer(parts[as.integer(f[3])])
-      ))
-    }
-  }
-  list(year = NA_integer_, month = NA_integer_)
+  formats |>
+    purrr::map(\(f) {
+      parts <- regmatches(name, regexec(f$regex, name, perl = TRUE))[[1]]
+      if (length(parts) == 0) {
+        return(NULL)
+      }
+      list(
+        year = as.integer(parts[f$year + 1]),
+        month = as.integer(parts[f$month + 1])
+      )
+    }) |>
+    purrr::compact() |>
+    purrr::pluck(1, .default = list(year = NA_integer_, month = NA_integer_))
 }
 
 # internal helper: last plausible year (1980-2099) in a string, or NA
 #' @noRd
 .last_plausible_year <- function(x) {
-  years <- .plausible_years(x)
-  if (length(years) == 0) {
-    return(NA_integer_)
-  }
-  years[length(years)]
+  dplyr::last(.plausible_years(x), default = NA_integer_)
 }
 
 # internal helper: every plausible year (1980-2099) in a string
@@ -473,9 +506,9 @@ extract_raster <- function(
   if (n == 1) {
     return(NA_integer_)
   }
-  from_names <- vapply(layer_names, .last_plausible_year, integer(1))
+  from_names <- purrr::map_int(unname(layer_names), .last_plausible_year)
   if (!all(is.na(from_names))) {
-    return(unname(from_names))
+    return(from_names)
   }
   in_file <- .plausible_years(tools::file_path_sans_ext(file_name))
   if (length(in_file) >= 2) {
@@ -486,16 +519,4 @@ extract_raster <- function(
     }
   }
   rep(NA_integer_, n)
-}
-
-# internal helper: give every data frame the same columns before rbind
-#' @noRd
-.fill_columns <- function(dfs) {
-  all_cols <- unique(unlist(lapply(dfs, names)))
-  lapply(dfs, function(df) {
-    for (col in setdiff(all_cols, names(df))) {
-      df[[col]] <- NA
-    }
-    df[, all_cols, drop = FALSE]
-  })
 }

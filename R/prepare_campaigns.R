@@ -116,106 +116,57 @@ prepare_campaigns <- function(
     )
   }
 
-  diagnostics <- list()
-  add_issue <- function(check, rows, detail) {
-    if (nrow(rows) == 0) {
-      return(invisible(NULL))
-    }
-    diagnostics[[length(diagnostics) + 1]] <<- data.frame(
-      check = check,
-      rows[, c("campaign_id", geography), drop = FALSE],
-      detail = detail
-    )
-  }
-
-  calendar <- .standardise_calendar(calendar, add_issue)
+  standardised <- .standardise_calendar(calendar, geography)
+  calendar <- standardised$calendar
   evaluation_out <- .standardise_evaluation(evaluation, geography)
 
   key_cols <- c(geography, "campaign_id")
-  .flag_duplicates(calendar, key_cols, "calendar", add_issue)
-  if (!is.null(evaluation)) {
-    .flag_duplicates(
-      evaluation_out, c(key_cols, "survey", "indicator"), "evaluation",
-      add_issue
-    )
-  }
-  if (!is.null(reported_coverage)) {
-    .flag_duplicates(
-      reported_coverage, key_cols, "reported_coverage", add_issue
-    )
-  }
+  duplicate_issues <- dplyr::bind_rows(
+    .flag_duplicates(calendar, key_cols, "calendar", geography),
+    if (!is.null(evaluation)) {
+      .flag_duplicates(
+        evaluation_out, c(key_cols, "survey", "indicator"), "evaluation",
+        geography
+      )
+    },
+    if (!is.null(reported_coverage)) {
+      .flag_duplicates(
+        reported_coverage, key_cols, "reported_coverage", geography
+      )
+    }
+  )
 
   campaigns <- .campaign_skeleton(
     calendar, evaluation_out, reported_coverage, key_cols
-  )
-  campaigns <- .attach_calendar(campaigns, calendar, key_cols)
-  campaigns <- .attach_coverage(
-    campaigns, evaluation_out, reported_coverage, key_cols,
-    coverage_indicator
-  )
-
-  campaigns$needs_dates <- is.na(campaigns$start_date) |
-    is.na(campaigns$end_date)
-  campaigns$needs_coverage <- is.na(campaigns$coverage)
-
-  add_issue(
-    "missing_dates", campaigns[campaigns$needs_dates, ],
-    "start or end date missing; complete by hand"
-  )
-  add_issue(
-    "missing_coverage", campaigns[campaigns$needs_coverage, ],
-    "no survey coverage or coverage reported by the campaign"
-  )
-  add_issue(
-    "missing_age",
-    campaigns[is.na(campaigns$age_min_months) &
-                is.na(campaigns$target_age), ],
-    "no target age in the calendar"
-  )
-  # survey values are checked in the evaluation table below
-  out_of_range <- !is.na(campaigns$coverage) &
-    campaigns$coverage_source %in% "coverage reported by the campaign" &
-    (campaigns$coverage < 0 | campaigns$coverage > 1)
-  add_issue(
-    "coverage_out_of_range", campaigns[out_of_range, ],
-    paste0(
-      "coverage of ", round(100 * campaigns$coverage[out_of_range], 1),
-      "% (", campaigns$coverage_source[out_of_range], ")"
+  ) |>
+    .attach_calendar(calendar, key_cols) |>
+    .attach_coverage(
+      evaluation_out, reported_coverage, key_cols, coverage_indicator
+    ) |>
+    dplyr::mutate(
+      needs_dates = is.na(.data$start_date) | is.na(.data$end_date),
+      needs_coverage = is.na(.data$coverage)
     )
+
+  diagnostics <- dplyr::bind_rows(
+    standardised$issues,
+    duplicate_issues,
+    .flag_campaign_gaps(campaigns, geography),
+    .flag_coverage_range(campaigns, evaluation_out, geography),
+    .flag_geography(campaigns, geography, boundaries),
+    .flag_overlaps(campaigns, geography)
   )
-  if (!is.null(evaluation)) {
-    bad_eval <- evaluation_out[
-      !is.na(evaluation_out$value) &
-        (evaluation_out$value < 0 | evaluation_out$value > 1),
-    ]
-    add_issue(
-      "coverage_out_of_range", bad_eval,
-      paste0(bad_eval$indicator, " of ", round(100 * bad_eval$value, 1), "%")
-    )
-  }
-  .flag_geography(campaigns, geography, boundaries, add_issue)
-  .flag_overlaps(campaigns, geography, add_issue)
 
-  diagnostics <- if (length(diagnostics) == 0) {
-    data.frame(
-      check = character(0), campaign_id = character(0),
-      campaigns[0, geography, drop = FALSE], detail = character(0)
-    )
-  } else {
-    do.call(rbind, diagnostics)
-  }
-  rownames(diagnostics) <- NULL
-
-  campaigns <- campaigns[do.call(order, unname(as.list(
-    campaigns[, c("campaign_id", geography), drop = FALSE]
-  ))), ]
-  rownames(campaigns) <- NULL
-  campaigns <- campaigns[, c(
-    geography, "campaign_id", "start_date", "end_date", "target_age",
-    "age_min_months", "age_max_months", "coverage", "coverage_lower",
-    "coverage_upper", "coverage_source", "coverage_reference",
-    "dates_source", "note", "needs_dates", "needs_coverage"
-  )]
+  campaigns <- campaigns |>
+    dplyr::arrange(
+      .data$campaign_id, dplyr::pick(dplyr::all_of(geography))
+    ) |>
+    dplyr::select(dplyr::all_of(c(
+      geography, "campaign_id", "start_date", "end_date", "target_age",
+      "age_min_months", "age_max_months", "coverage", "coverage_lower",
+      "coverage_upper", "coverage_source", "coverage_reference",
+      "dates_source", "note", "needs_dates", "needs_coverage"
+    )))
 
   list(
     campaigns = campaigns,
@@ -243,7 +194,7 @@ prepare_campaigns <- function(
   if (inherits(x, "sf")) {
     x <- sf::st_drop_geometry(x)
   }
-  x <- as.data.frame(x)
+  x <- dplyr::as_tibble(x)
   missing_cols <- setdiff(needed, names(x))
   if (length(missing_cols) > 0) {
     cli::cli_abort(paste0(
@@ -254,52 +205,105 @@ prepare_campaigns <- function(
   x
 }
 
-# internal helper: dates as Date, target ages as month bounds
+# internal helper: rows with a detail column as diagnostics rows
 #' @noRd
-.standardise_calendar <- function(calendar, add_issue) {
-  calendar$start_date <- as.Date(calendar$start_date)
-  calendar$end_date <- as.Date(calendar$end_date)
-  for (col in c("target_age", "source", "note")) {
-    if (!col %in% names(calendar)) {
-      calendar[[col]] <- NA_character_
-    }
-  }
+.as_issues <- function(rows, check, geography) {
+  check_name <- check
+  rows |>
+    dplyr::mutate(check = check_name) |>
+    dplyr::select(dplyr::all_of(c("check", "campaign_id", geography, "detail")))
+}
 
+# internal helper: dates as Date, target ages as month bounds. returns the
+# calendar and its issues
+#' @noRd
+.standardise_calendar <- function(calendar, geography) {
+  missing_text <- setdiff(c("target_age", "source", "note"), names(calendar))
+  text_cols <- purrr::map(purrr::set_names(missing_text), \(col) NA_character_)
   has_bounds <- all(c("age_min_months", "age_max_months") %in% names(calendar))
-  parsed <- .parse_target_age(calendar$target_age)
-  if (has_bounds) {
-    given <- !is.na(calendar$age_min_months) & !is.na(calendar$age_max_months)
-    parsed$min[given] <- calendar$age_min_months[given]
-    parsed$max[given] <- calendar$age_max_months[given]
-  }
-  calendar$age_min_months <- parsed$min
-  calendar$age_max_months <- parsed$max
 
-  unreadable <- !is.na(calendar$target_age) & is.na(parsed$min) &
-    !(has_bounds && !is.na(calendar$age_min_months))
-  add_issue(
-    "invalid_age", calendar[unreadable, ],
-    paste0("target age not read: ", calendar$target_age[unreadable])
-  )
-  bad_range <- !is.na(parsed$min) & !is.na(parsed$max) &
-    (parsed$min < 0 | parsed$max <= parsed$min)
-  add_issue(
-    "invalid_age", calendar[bad_range, ],
-    paste0(
-      "age range ", parsed$min[bad_range], " to ", parsed$max[bad_range],
-      " months"
+  calendar <- calendar |>
+    dplyr::mutate(
+      !!!text_cols,
+      start_date = as.Date(.data$start_date),
+      end_date = as.Date(.data$end_date)
     )
+  parsed <- .parse_target_age(calendar$target_age)
+  calendar <- dplyr::bind_cols(
+    calendar,
+    dplyr::tibble(.min_parsed = parsed$min, .max_parsed = parsed$max)
   )
-  calendar$age_min_months[bad_range] <- NA
-  calendar$age_max_months[bad_range] <- NA
 
-  backwards <- !is.na(calendar$start_date) & !is.na(calendar$end_date) &
-    calendar$end_date < calendar$start_date
-  add_issue(
-    "end_before_start", calendar[backwards, ],
-    paste(calendar$start_date[backwards], "to", calendar$end_date[backwards])
+  # month bounds given in the calendar take precedence over the text
+  if (has_bounds) {
+    calendar <- calendar |>
+      dplyr::mutate(
+        .min_given = as.numeric(.data$age_min_months),
+        .max_given = as.numeric(.data$age_max_months)
+      )
+  } else {
+    calendar <- calendar |>
+      dplyr::mutate(.min_given = NA_real_, .max_given = NA_real_)
+  }
+
+  calendar <- calendar |>
+    dplyr::mutate(
+      .given = !is.na(.data$.min_given) & !is.na(.data$.max_given),
+      age_min_months = dplyr::if_else(
+        .data$.given, .data$.min_given, .data$.min_parsed
+      ),
+      age_max_months = dplyr::if_else(
+        .data$.given, .data$.max_given, .data$.max_parsed
+      ),
+      .unreadable = !is.na(.data$target_age) & is.na(.data$.min_parsed) &
+        !.data$.given,
+      .bad_range = !is.na(.data$age_min_months) &
+        !is.na(.data$age_max_months) &
+        (.data$age_min_months < 0 |
+           .data$age_max_months <= .data$age_min_months),
+      .backwards = !is.na(.data$start_date) & !is.na(.data$end_date) &
+        .data$end_date < .data$start_date
+    )
+
+  issues <- dplyr::bind_rows(
+    calendar |>
+      dplyr::filter(.data$.unreadable) |>
+      dplyr::mutate(
+        detail = paste0("target age not read: ", .data$target_age)
+      ) |>
+      .as_issues("invalid_age", geography),
+    calendar |>
+      dplyr::filter(.data$.bad_range) |>
+      dplyr::mutate(
+        detail = paste0(
+          "age range ", .data$age_min_months, " to ", .data$age_max_months,
+          " months"
+        )
+      ) |>
+      .as_issues("invalid_age", geography),
+    calendar |>
+      dplyr::filter(.data$.backwards) |>
+      dplyr::mutate(
+        detail = paste(.data$start_date, "to", .data$end_date)
+      ) |>
+      .as_issues("end_before_start", geography)
   )
-  calendar
+
+  calendar <- calendar |>
+    dplyr::mutate(
+      age_min_months = dplyr::if_else(
+        .data$.bad_range, NA_real_, .data$age_min_months
+      ),
+      age_max_months = dplyr::if_else(
+        .data$.bad_range, NA_real_, .data$age_max_months
+      )
+    ) |>
+    dplyr::select(-dplyr::all_of(c(
+      ".min_parsed", ".max_parsed", ".min_given", ".max_given", ".given",
+      ".unreadable", ".bad_range", ".backwards"
+    )))
+
+  list(calendar = calendar, issues = issues)
 }
 
 # internal helper: read target ages such as "9-59 months" or "9 months to
@@ -312,29 +316,31 @@ prepare_campaigns <- function(
     "(?:-|\u2013|\u2014|to|and)\\s*",
     "(\\d+)\\s*(months?|mo|m|years?|yrs?|y)\\s*$"
   )
-  m <- regmatches(
-    tolower(as.character(x)),
-    regexec(pattern, tolower(as.character(x)), perl = TRUE)
-  )
-  out <- list(
-    min = rep(NA_real_, length(x)),
-    max = rep(NA_real_, length(x))
-  )
-  in_months <- function(value, unit) {
-    ifelse(grepl("^y", unit), value * 12, value)
-  }
-  for (i in seq_along(m)) {
-    parts <- m[[i]]
+  text <- tolower(as.character(x))
+  matches <- regmatches(text, regexec(pattern, text, perl = TRUE))
+
+  bounds <- purrr::map(matches, \(parts) {
     if (length(parts) == 0) {
-      next
+      return(c(NA_real_, NA_real_))
     }
     upper_unit <- parts[5]
     lower_unit <- if (nzchar(parts[3])) parts[3] else upper_unit
     upper_step <- if (grepl("^y", upper_unit)) 12 else 1
-    out$min[i] <- in_months(as.numeric(parts[2]), lower_unit)
-    out$max[i] <- in_months(as.numeric(parts[4]), upper_unit) + upper_step
-  }
-  out
+    c(
+      .in_months(as.numeric(parts[2]), lower_unit),
+      .in_months(as.numeric(parts[4]), upper_unit) + upper_step
+    )
+  })
+  list(
+    min = purrr::map_dbl(bounds, 1),
+    max = purrr::map_dbl(bounds, 2)
+  )
+}
+
+# internal helper: a value in months, given its unit
+#' @noRd
+.in_months <- function(value, unit) {
+  if (grepl("^y", unit)) value * 12 else value
 }
 
 # internal helper: survey results as proportions in a standard layout
@@ -343,69 +349,62 @@ prepare_campaigns <- function(
   if (is.null(evaluation)) {
     return(NULL)
   }
-  column <- function(name) {
-    if (name %in% names(evaluation)) evaluation[[name]] else NA
-  }
-  out <- data.frame(
-    evaluation[, geography, drop = FALSE],
-    campaign_id = evaluation$campaign_id,
-    survey = as.character(column("survey")),
-    indicator = evaluation$indicator,
-    value = as.numeric(evaluation$value_pct) / 100,
-    lower = as.numeric(column("lower_pct")) / 100,
-    upper = as.numeric(column("upper_pct")) / 100,
-    n = as.numeric(column("n"))
-  )
-  rownames(out) <- NULL
-  out
+  optional <- c("survey", "lower_pct", "upper_pct", "n")
+  missing_cols <- setdiff(optional, names(evaluation))
+  empty_cols <- purrr::map(purrr::set_names(missing_cols), \(col) NA)
+
+  evaluation |>
+    dplyr::mutate(
+      !!!empty_cols,
+      survey = as.character(.data$survey),
+      value = as.numeric(.data$value_pct) / 100,
+      lower = as.numeric(.data$lower_pct) / 100,
+      upper = as.numeric(.data$upper_pct) / 100,
+      n = as.numeric(.data$n)
+    ) |>
+    dplyr::select(dplyr::all_of(c(
+      geography, "campaign_id", "survey", "indicator", "value", "lower",
+      "upper", "n"
+    )))
 }
 
+# internal helper: flag the first row of each key that repeats
 #' @noRd
-.campaign_key <- function(x, key_cols) {
-  do.call(paste, c(unname(as.list(x[, key_cols, drop = FALSE])), sep = "\r"))
-}
-
-# internal helper: flag rows that repeat a key
-#' @noRd
-.flag_duplicates <- function(x, key_cols, arg, add_issue) {
-  key <- .campaign_key(x, key_cols)
-  dup <- duplicated(key) | duplicated(key, fromLast = TRUE)
-  rows <- x[dup & !duplicated(key), , drop = FALSE]
-  add_issue(
-    "duplicate_record", rows,
-    paste0("repeated in ", arg, "; the first row is used")
-  )
+.flag_duplicates <- function(x, key_cols, arg, geography) {
+  detail_text <- paste0("repeated in ", arg, "; the first row is used")
+  x |>
+    dplyr::mutate(.key_rows = dplyr::n(), .by = dplyr::all_of(key_cols)) |>
+    dplyr::filter(.data$.key_rows > 1) |>
+    dplyr::distinct(dplyr::pick(dplyr::all_of(key_cols)), .keep_all = TRUE) |>
+    dplyr::mutate(detail = detail_text) |>
+    .as_issues("duplicate_record", geography)
 }
 
 # internal helper: one row per geography and campaign found in any input
 #' @noRd
 .campaign_skeleton <- function(calendar, evaluation, reported, key_cols) {
-  parts <- list(calendar[, key_cols, drop = FALSE])
-  if (!is.null(evaluation)) {
-    parts[[length(parts) + 1]] <- evaluation[, key_cols, drop = FALSE]
-  }
-  if (!is.null(reported)) {
-    parts[[length(parts) + 1]] <- reported[, key_cols, drop = FALSE]
-  }
-  all_keys <- do.call(rbind, parts)
-  all_keys[!duplicated(.campaign_key(all_keys, key_cols)), , drop = FALSE]
+  list(calendar, evaluation, reported) |>
+    purrr::compact() |>
+    purrr::map(\(x) dplyr::select(x, dplyr::all_of(key_cols))) |>
+    dplyr::bind_rows() |>
+    dplyr::distinct()
 }
 
+# internal helper: dates, ages, source and note from the first calendar row
+# of each key
 #' @noRd
 .attach_calendar <- function(campaigns, calendar, key_cols) {
-  calendar <- calendar[!duplicated(.campaign_key(calendar, key_cols)), ]
-  i <- match(
-    .campaign_key(campaigns, key_cols),
-    .campaign_key(calendar, key_cols)
+  dates <- calendar |>
+    dplyr::distinct(dplyr::pick(dplyr::all_of(key_cols)), .keep_all = TRUE) |>
+    dplyr::select(dplyr::all_of(c(
+      key_cols, "start_date", "end_date", "target_age", "age_min_months",
+      "age_max_months",
+      dates_source = "source", "note"
+    )))
+  dplyr::left_join(
+    campaigns, dates,
+    by = key_cols, relationship = "many-to-one"
   )
-  campaigns$start_date <- calendar$start_date[i]
-  campaigns$end_date <- calendar$end_date[i]
-  campaigns$target_age <- calendar$target_age[i]
-  campaigns$age_min_months <- calendar$age_min_months[i]
-  campaigns$age_max_months <- calendar$age_max_months[i]
-  campaigns$dates_source <- calendar$source[i]
-  campaigns$note <- calendar$note[i]
-  campaigns
 }
 
 # internal helper: survey coverage first, then coverage reported by the
@@ -413,50 +412,148 @@ prepare_campaigns <- function(
 #' @noRd
 .attach_coverage <- function(campaigns, evaluation, reported, key_cols,
                              coverage_indicator) {
-  campaigns$coverage <- NA_real_
-  campaigns$coverage_lower <- NA_real_
-  campaigns$coverage_upper <- NA_real_
-  campaigns$coverage_source <- NA_character_
-  campaigns$coverage_reference <- NA_character_
-  key <- .campaign_key(campaigns, key_cols)
+  campaigns <- campaigns |>
+    dplyr::mutate(
+      coverage = NA_real_,
+      coverage_lower = NA_real_,
+      coverage_upper = NA_real_,
+      coverage_source = NA_character_,
+      coverage_reference = NA_character_
+    )
 
   if (!is.null(evaluation)) {
-    survey <- evaluation[evaluation$indicator == coverage_indicator, ]
-    survey <- survey[!duplicated(.campaign_key(survey, key_cols)), ]
-    i <- match(key, .campaign_key(survey, key_cols))
-    found <- !is.na(i) & !is.na(survey$value[i])
-    campaigns$coverage[found] <- survey$value[i[found]]
-    campaigns$coverage_lower[found] <- survey$lower[i[found]]
-    campaigns$coverage_upper[found] <- survey$upper[i[found]]
-    campaigns$coverage_source[found] <- "survey"
-    campaigns$coverage_reference[found] <- survey$survey[i[found]]
+    wanted_indicator <- coverage_indicator
+    survey <- evaluation |>
+      dplyr::filter(.data$indicator == wanted_indicator) |>
+      dplyr::distinct(
+        dplyr::pick(dplyr::all_of(key_cols)), .keep_all = TRUE
+      ) |>
+      dplyr::filter(!is.na(.data$value)) |>
+      dplyr::select(dplyr::all_of(c(
+        key_cols,
+        .survey_value = "value", .survey_lower = "lower",
+        .survey_upper = "upper", .survey_name = "survey"
+      )))
+    campaigns <- campaigns |>
+      dplyr::left_join(survey, by = key_cols, relationship = "many-to-one") |>
+      dplyr::mutate(
+        coverage = .data$.survey_value,
+        coverage_lower = .data$.survey_lower,
+        coverage_upper = .data$.survey_upper,
+        coverage_source = dplyr::if_else(
+          is.na(.data$.survey_value), NA_character_, "survey"
+        ),
+        coverage_reference = .data$.survey_name
+      ) |>
+      dplyr::select(-dplyr::starts_with(".survey_"))
   }
 
   if (!is.null(reported)) {
-    reported <- reported[!duplicated(.campaign_key(reported, key_cols)), ]
-    i <- match(key, .campaign_key(reported, key_cols))
-    fill <- is.na(campaigns$coverage) & !is.na(i) &
-      !is.na(reported$coverage_pct[i])
-    campaigns$coverage[fill] <- reported$coverage_pct[i[fill]] / 100
-    campaigns$coverage_source[fill] <- "coverage reported by the campaign"
-    if ("source" %in% names(reported)) {
-      campaigns$coverage_reference[fill] <- reported$source[i[fill]]
+    if (!"source" %in% names(reported)) {
+      reported <- dplyr::mutate(reported, source = NA_character_)
     }
+    reported <- reported |>
+      dplyr::distinct(
+        dplyr::pick(dplyr::all_of(key_cols)), .keep_all = TRUE
+      ) |>
+      dplyr::mutate(
+        .reported_value = .data$coverage_pct / 100,
+        .reported_name = as.character(.data$source)
+      ) |>
+      dplyr::select(dplyr::all_of(
+        c(key_cols, ".reported_value", ".reported_name")
+      ))
+    campaigns <- campaigns |>
+      dplyr::left_join(
+        reported,
+        by = key_cols, relationship = "many-to-one"
+      ) |>
+      dplyr::mutate(
+        .fill = is.na(.data$coverage) & !is.na(.data$.reported_value),
+        coverage = dplyr::if_else(
+          .data$.fill, .data$.reported_value, .data$coverage
+        ),
+        coverage_source = dplyr::if_else(
+          .data$.fill, "coverage reported by the campaign",
+          .data$coverage_source
+        ),
+        coverage_reference = dplyr::if_else(
+          .data$.fill, .data$.reported_name, .data$coverage_reference
+        )
+      ) |>
+      dplyr::select(
+        -dplyr::all_of(c(".fill", ".reported_value", ".reported_name"))
+      )
   }
   campaigns
+}
+
+# internal helper: records without dates, coverage or a target age
+#' @noRd
+.flag_campaign_gaps <- function(campaigns, geography) {
+  dplyr::bind_rows(
+    campaigns |>
+      dplyr::filter(.data$needs_dates) |>
+      dplyr::mutate(detail = "start or end date missing; complete by hand") |>
+      .as_issues("missing_dates", geography),
+    campaigns |>
+      dplyr::filter(.data$needs_coverage) |>
+      dplyr::mutate(
+        detail = "no survey coverage or coverage reported by the campaign"
+      ) |>
+      .as_issues("missing_coverage", geography),
+    campaigns |>
+      dplyr::filter(is.na(.data$age_min_months), is.na(.data$target_age)) |>
+      dplyr::mutate(detail = "no target age in the calendar") |>
+      .as_issues("missing_age", geography)
+  )
+}
+
+# internal helper: coverage reported by the campaign and survey values
+# outside 0 to 1
+#' @noRd
+.flag_coverage_range <- function(campaigns, evaluation, geography) {
+  reported_issues <- campaigns |>
+    dplyr::filter(
+      !is.na(.data$coverage),
+      .data$coverage_source %in% "coverage reported by the campaign",
+      .data$coverage < 0 | .data$coverage > 1
+    ) |>
+    dplyr::mutate(
+      detail = paste0(
+        "coverage of ", round(100 * .data$coverage, 1), "% (",
+        .data$coverage_source, ")"
+      )
+    ) |>
+    .as_issues("coverage_out_of_range", geography)
+
+  survey_issues <- if (!is.null(evaluation)) {
+    evaluation |>
+      dplyr::filter(
+        !is.na(.data$value),
+        .data$value < 0 | .data$value > 1
+      ) |>
+      dplyr::mutate(
+        detail = paste0(
+          .data$indicator, " of ", round(100 * .data$value, 1), "%"
+        )
+      ) |>
+      .as_issues("coverage_out_of_range", geography)
+  }
+  dplyr::bind_rows(reported_issues, survey_issues)
 }
 
 # internal helper: geography with missing identifiers, or not in the
 # boundaries
 #' @noRd
-.flag_geography <- function(campaigns, geography, boundaries, add_issue) {
-  missing_id <- !stats::complete.cases(campaigns[, geography, drop = FALSE])
-  add_issue(
-    "unmatched_geography", campaigns[missing_id, ],
-    "geography identifier missing"
-  )
+.flag_geography <- function(campaigns, geography, boundaries) {
+  missing_id <- campaigns |>
+    dplyr::filter(dplyr::if_any(dplyr::all_of(geography), is.na))
+  missing_issues <- missing_id |>
+    dplyr::mutate(detail = "geography identifier missing") |>
+    .as_issues("unmatched_geography", geography)
   if (is.null(boundaries)) {
-    return(invisible(NULL))
+    return(missing_issues)
   }
   if (inherits(boundaries, "sf")) {
     boundaries <- sf::st_drop_geometry(boundaries)
@@ -467,36 +564,38 @@ prepare_campaigns <- function(
       "Column{?s} {.val {missing_cols}} not in {.arg boundaries}."
     )
   }
-  known <- .campaign_key(boundaries, geography)
-  outside <- !missing_id & !.campaign_key(campaigns, geography) %in% known
-  add_issue(
-    "unmatched_geography", campaigns[outside, ],
-    "not in the boundaries"
-  )
+  known <- boundaries |>
+    dplyr::select(dplyr::all_of(geography)) |>
+    dplyr::distinct()
+  outside_issues <- campaigns |>
+    dplyr::filter(!dplyr::if_any(dplyr::all_of(geography), is.na)) |>
+    dplyr::anti_join(known, by = geography) |>
+    dplyr::mutate(detail = "not in the boundaries") |>
+    .as_issues("unmatched_geography", geography)
+  dplyr::bind_rows(missing_issues, outside_issues)
 }
 
 # internal helper: pairs of campaigns in the same geography with
 # overlapping dates
 #' @noRd
-.flag_overlaps <- function(campaigns, geography, add_issue) {
-  dated <- campaigns[!campaigns$needs_dates, , drop = FALSE]
-  if (nrow(dated) < 2) {
-    return(invisible(NULL))
-  }
-  geo <- .campaign_key(dated, geography)
-  pairs <- merge(
-    data.frame(geo = geo, a = seq_len(nrow(dated))),
-    data.frame(geo = geo, b = seq_len(nrow(dated))),
-    by = "geo"
-  )
-  pairs <- pairs[pairs$a < pairs$b, ]
-  pairs <- pairs[
-    dated$campaign_id[pairs$a] != dated$campaign_id[pairs$b] &
-      dated$start_date[pairs$a] <= dated$end_date[pairs$b] &
-      dated$start_date[pairs$b] <= dated$end_date[pairs$a],
-  ]
-  add_issue(
-    "overlapping_campaigns", dated[pairs$a, , drop = FALSE],
-    paste("overlaps", dated$campaign_id[pairs$b])
-  )
+.flag_overlaps <- function(campaigns, geography) {
+  dated <- campaigns |>
+    dplyr::filter(!.data$needs_dates) |>
+    dplyr::mutate(.row = dplyr::row_number())
+  later <- dated |>
+    dplyr::select(dplyr::all_of(c(
+      geography,
+      .row_b = ".row", .id_b = "campaign_id", .start_b = "start_date",
+      .end_b = "end_date"
+    )))
+  dated |>
+    dplyr::inner_join(later, by = geography, relationship = "many-to-many") |>
+    dplyr::filter(
+      .data$.row < .data$.row_b,
+      .data$campaign_id != .data$.id_b,
+      .data$start_date <= .data$.end_b,
+      .data$.start_b <= .data$end_date
+    ) |>
+    dplyr::mutate(detail = paste("overlaps", .data$.id_b)) |>
+    .as_issues("overlapping_campaigns", geography)
 }
