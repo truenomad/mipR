@@ -14,6 +14,7 @@ immunity_draws(
   maternal_months = 6,
   rho_years = 0.9,
   rho_doses = 0.5,
+  batch_size = 10,
   ...
 )
 }
@@ -42,6 +43,9 @@ years. Default \code{0.9}.}
 \item{rho_doses}{Correlation between MCV1 and MCV2 coverage in the same
 year. Default \code{0.5}.}
 
+\item{batch_size}{Number of draws run through the engine together.
+Larger batches use more memory. Default \code{10}.}
+
 \item{...}{Passed to \code{\link[=summarise_immunity]{summarise_immunity()}}, for example \code{geography},
 \code{at} and \code{age_breaks}.}
 }
@@ -65,6 +69,11 @@ Routine coverage draws are correlated across years within a geography
 and dose (first-order autocorrelation \code{rho_years}) and between MCV1 and
 MCV2 in the same year (\code{rho_doses}). Each campaign record is drawn on its
 own.
+
+\strong{Parallel runs.} When mirai daemons are set, for example with
+\code{mirai::daemons(6)}, batches of draws run in parallel on the daemons.
+Coverage is drawn before the batches are sent out, so the result is the
+same with or without daemons. The daemons load the installed mipR.
 }
 \examples{
 \dontrun{

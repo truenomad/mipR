@@ -80,10 +80,10 @@ summarise_immunity <- function(
     dplyr::summarise(
       dplyr::across(
         c("dose_0", "dose_1", "dose_2", "dose_3_plus"),
-        ~ sum(.x * .data$population) / sum(.data$population)
+        ~ sum(.x * population) / sum(population)
       ),
-      susceptible = sum(.data$susceptible),
-      population = sum(.data$population),
+      susceptible = sum(susceptible),
+      population = sum(population),
       .by = dplyr::all_of(c(geography, "month", "age_band"))
     ) |>
     dplyr::mutate(
@@ -225,7 +225,7 @@ check_immunity <- function(immunity, campaigns) {
     dplyr::summarise(
       dplyr::across(
         c("dose_0", "dose_1", "dose_2", "dose_3_plus"),
-        ~ sum(.x * .data$population) / sum(.data$population)
+        ~ sum(.x * population) / sum(population)
       ),
       .by = dplyr::all_of(c(geography, "campaign_id", "period"))
     ) |>
@@ -263,9 +263,9 @@ check_immunity <- function(immunity, campaigns) {
   summary <- comparison |>
     dplyr::summarise(
       areas = dplyr::n(),
-      mean_difference = mean(.data$difference),
-      mean_absolute_difference = mean(abs(.data$difference)),
-      share_within_interval = mean(.data$within_interval, na.rm = TRUE),
+      mean_difference = mean(difference),
+      mean_absolute_difference = mean(abs(difference)),
+      share_within_interval = mean(within_interval, na.rm = TRUE),
       .by = c("campaign_id", "indicator")
     )
 

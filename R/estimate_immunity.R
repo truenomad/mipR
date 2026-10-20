@@ -198,11 +198,11 @@ ve_cdc <- function(
 .summarise_state <- function(state) {
   state |>
     dplyr::summarise(
-      susceptible_share = sum(.data$share[!.data$protected]),
-      dose_0 = sum(.data$share[.data$doses == 0]),
-      dose_1 = sum(.data$share[.data$doses == 1]),
-      dose_2 = sum(.data$share[.data$doses == 2]),
-      dose_3_plus = sum(.data$share[.data$doses >= 3]),
+      susceptible_share = sum(share[!protected]),
+      dose_0 = sum(share[doses == 0]),
+      dose_1 = sum(share[doses == 1]),
+      dose_2 = sum(share[doses == 2]),
+      dose_3_plus = sum(share[doses >= 3]),
       .by = "cell"
     )
 }
@@ -271,14 +271,14 @@ ve_cdc <- function(
 
   fraction <- joined |>
     dplyr::summarise(
-      tier_share = sum(.data$share),
+      tier_share = sum(share),
       .by = c("cell", "tier", "reach")
     ) |>
     dplyr::arrange(.data$cell, .data$tier) |>
     dplyr::mutate(
-      filled = cumsum(.data$tier_share) - .data$tier_share,
-      fraction = (.data$reach - .data$filled) / .data$tier_share,
-      fraction = pmin(pmax(.data$fraction, 0), 1),
+      filled = cumsum(tier_share) - tier_share,
+      fraction = (reach - filled) / tier_share,
+      fraction = pmin(pmax(fraction, 0), 1),
       .by = "cell"
     ) |>
     dplyr::select("cell", "tier", "fraction")
@@ -306,7 +306,7 @@ ve_cdc <- function(
 
   dplyr::bind_rows(untouched, stays, fails, protects) |>
     dplyr::summarise(
-      share = sum(.data$share),
+      share = sum(share),
       .by = c("cell", "doses", "mcv1", "protected")
     ) |>
     dplyr::filter(.data$share != 0)
@@ -333,16 +333,16 @@ ve_cdc <- function(
     dplyr::mutate(coupling = .optional_column(events, "coupling")) |>
     dplyr::filter(.data$coverage > 0, .data$eligible_share > 0) |>
     dplyr::mutate(
-      coupling = dplyr::coalesce(.data$coupling, default_coupling),
-      reach = .data$coverage * .data$eligible_share,
-      age_at_dose = pmax(.data$age_at_dose, min(ve$breaks)),
-      type_order = match(.data$type, c("mcv1", "mcv2", "sia"))
+      coupling = dplyr::coalesce(coupling, default_coupling),
+      reach = coverage * eligible_share,
+      age_at_dose = pmax(age_at_dose, min(ve$breaks)),
+      type_order = match(type, c("mcv1", "mcv2", "sia"))
     ) |>
     dplyr::left_join(
       .ve_table(ve),
       by = dplyr::join_by("type", closest("age_at_dose" >= "age_from"))
     ) |>
-    dplyr::arrange(.data$cell, .data$month, .data$type_order) |>
+    dplyr::arrange(cell, month, type_order) |>
     dplyr::mutate(step = dplyr::row_number(), .by = "cell")
 
   by_step <- events |>
@@ -378,8 +378,8 @@ ve_cdc <- function(
 
   contributions <- steps |>
     dplyr::mutate(
-      newly_protected = dplyr::lag(.data$susceptible_share) -
-        .data$susceptible_share,
+      newly_protected = dplyr::lag(susceptible_share) -
+        susceptible_share,
       .by = "cell"
     ) |>
     dplyr::filter(.data$step > 0) |>
@@ -414,14 +414,14 @@ ve_cdc <- function(
     ) |>
     dplyr::arrange(.data$cell, .data$measure, .data$step) |>
     dplyr::mutate(
-      pending = (.data$value - dplyr::lag(.data$value)) *
-        (1 - .data$timing_share),
+      pending = (value - dplyr::lag(value)) *
+        (1 - timing_share),
       .by = c("cell", "measure")
     ) |>
     dplyr::filter(.data$step > 0) |>
     dplyr::summarise(
-      end = dplyr::last(.data$value),
-      mid = dplyr::last(.data$value) - sum(.data$pending),
+      end = dplyr::last(value),
+      mid = dplyr::last(value) - sum(pending),
       .by = c("cell", "month", "measure")
     )
 
@@ -466,6 +466,11 @@ ve_cdc <- function(
 #' MCV2 in the same year (`rho_doses`). Each campaign record is drawn on its
 #' own.
 #'
+#' **Parallel runs.** When mirai daemons are set, for example with
+#' `mirai::daemons(6)`, batches of draws run in parallel on the daemons.
+#' Coverage is drawn before the batches are sent out, so the result is the
+#' same with or without daemons. The daemons load the installed mipR.
+#'
 #' @inheritParams estimate_immunity
 #' @param n_draws Number of draws. Default `100`.
 #' @param seed Random seed, so the draws can be reproduced. Default `1`.
@@ -473,6 +478,8 @@ ve_cdc <- function(
 #'   years. Default `0.9`.
 #' @param rho_doses Correlation between MCV1 and MCV2 coverage in the same
 #'   year. Default `0.5`.
+#' @param batch_size Number of draws run through the engine together.
+#'   Larger batches use more memory. Default `10`.
 #' @param ... Passed to [summarise_immunity()], for example `geography`,
 #'   `at` and `age_breaks`.
 #'
@@ -499,30 +506,73 @@ immunity_draws <- function(
   maternal_months = 6,
   rho_years = 0.9,
   rho_doses = 0.5,
+  batch_size = 10,
   ...
 ) {
   coupling <- match.arg(coupling)
   .check_history(history)
   geography <- setdiff(names(history$cells), c("cell", "birth_month"))
   panel <- .cohort_panel_input(cohorts, geography)
+  cells <- history$cells
 
+  # with `at`, only the cohorts alive in those months and the opportunities
+  # up to them affect the summary, so the engine runs on those alone
+  at <- list(...)$at
+  last_month <- NULL
+  if (!is.null(at)) {
+    months <- .month_from_index(.month_index(.as_date(at, "at")))
+    last_month <- max(months)
+    panel <- dplyr::filter(panel, .data$month %in% months)
+    cells <- dplyr::semi_join(
+      cells, panel, by = c(geography, "birth_month")
+    )
+  }
+
+  # coverage is drawn for every opportunity before trimming, so the draws
+  # do not depend on `at`
   set.seed(seed)
-  draws <- purrr::map(seq_len(n_draws), \(d) {
+  drawn <- purrr::map(seq_len(n_draws), \(d) {
     drawn_events <- .draw_coverage(
       history$history, geography, rho_years, rho_doses
     )
-    run <- .run_engine(
-      history$cells, drawn_events, coupling, ve, max_doses = 8L
-    )
-    .monthly_values(panel, history$cells, run$steps, geography) |>
-      dplyr::mutate(
-        susceptible = .data$susceptible_share * .data$population,
-        maternal_protection = .data$age_months < maternal_months
-      ) |>
-      summarise_immunity(...) |>
-      dplyr::mutate(draw = d)
-  }) |>
-    purrr::list_rbind()
+    if (!is.null(last_month)) {
+      drawn_events <- drawn_events |>
+        dplyr::filter(
+          .data$cell %in% cells$cell,
+          .data$month <= last_month
+        )
+    }
+    drawn_events
+  })
+
+  # the summary is grouped by draw as well as geography
+  summary_args <- list(...)
+  if (!is.null(summary_args$geography)) {
+    summary_args$geography <- c(summary_args$geography, "draw")
+  }
+
+  # batches of draws, each run through the engine in one pass; batches run
+  # in parallel when mirai daemons are set
+  batches <- split(seq_len(n_draws), ceiling(seq_len(n_draws) / batch_size)) |>
+    purrr::map(\(batch) list(draws = batch, events = drawn[batch]))
+  batch_args <- list(
+    cells = cells, cell_offset = max(c(0L, history$cells$cell)),
+    panel = panel, geography = geography, coupling = coupling, ve = ve,
+    maternal_months = maternal_months, summary_args = summary_args
+  )
+  parallel <- requireNamespace("mirai", quietly = TRUE) &&
+    mirai::daemons_set()
+  draws <- if (parallel) {
+    mirai::mirai_map(batches, .draw_batch, .args = batch_args) |>
+      mirai::collect_mirai(options = c(".stop", ".progress"))
+  } else {
+    purrr::map(batches, \(batch) {
+      do.call(.draw_batch, c(list(batch), batch_args))
+    })
+  }
+  draws <- draws |>
+    purrr::list_rbind() |>
+    dplyr::arrange(.data$draw)
 
   keys <- setdiff(
     names(draws),
@@ -533,15 +583,42 @@ immunity_draws <- function(
   )
   draws |>
     dplyr::summarise(
-      population = dplyr::first(.data$population),
-      susceptible_median = stats::median(.data$susceptible),
-      susceptible_lower = stats::quantile(.data$susceptible, 0.025),
-      susceptible_upper = stats::quantile(.data$susceptible, 0.975),
-      share_median = stats::median(.data$susceptible_share),
-      share_lower = stats::quantile(.data$susceptible_share, 0.025),
-      share_upper = stats::quantile(.data$susceptible_share, 0.975),
+      population = dplyr::first(population),
+      susceptible_median = stats::median(susceptible),
+      susceptible_lower = stats::quantile(susceptible, 0.025),
+      susceptible_upper = stats::quantile(susceptible, 0.975),
+      share_median = stats::median(susceptible_share),
+      share_lower = stats::quantile(susceptible_share, 0.025),
+      share_upper = stats::quantile(susceptible_share, 0.975),
       .by = dplyr::all_of(keys)
     )
+}
+
+# internal helper: run one batch of draws through the engine and summarise
+# it. every cohort is copied once per draw under its own cell number
+#' @noRd
+.draw_batch <- function(batch, cells, cell_offset, panel, geography,
+                        coupling, ve, maternal_months, summary_args) {
+  batch_cells <- purrr::map(batch$draws, \(d) {
+    dplyr::mutate(
+      cells,
+      cell = .data$cell + (d - 1L) * cell_offset,
+      draw = d
+    )
+  }) |>
+    purrr::list_rbind()
+  batch_events <- purrr::map2(batch$draws, batch$events, \(d, events) {
+    dplyr::mutate(events, cell = .data$cell + (d - 1L) * cell_offset)
+  }) |>
+    purrr::list_rbind()
+
+  run <- .run_engine(batch_cells, batch_events, coupling, ve, max_doses = 8L)
+  values <- .monthly_values(panel, batch_cells, run$steps, geography) |>
+    dplyr::mutate(
+      susceptible = .data$susceptible_share * .data$population,
+      maternal_protection = .data$age_months < maternal_months
+    )
+  do.call(summarise_immunity, c(list(values), summary_args))
 }
 
 # internal helper: one draw of coverage for every opportunity. routine draws
