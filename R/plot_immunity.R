@@ -179,7 +179,7 @@ save_plot <- function(
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   ggplot2::ggsave(
     path, plot,
-    width = width, height = height, dpi = dpi, ...
+    width = width, height = height, dpi = dpi, bg = "white", ...
   )
   if (compress && grepl("\\.png$", path, ignore.case = TRUE)) {
     compress_png(path, speed = speed)
@@ -288,7 +288,9 @@ compress_png <- function(path, speed = 1, quiet = FALSE) {
       plot.caption = ggplot2::element_text(colour = "grey35", hjust = 0),
       plot.title.position = "plot",
       plot.caption.position = "plot",
-      legend.position = "bottom"
+      legend.position = "bottom",
+      plot.background = ggplot2::element_rect(fill = "white", colour = NA),
+      panel.background = ggplot2::element_rect(fill = "white", colour = NA)
     )
 }
 
@@ -761,6 +763,9 @@ plot_cohort_journey <- function(
     .theme_mipr(title_size, subtitle_size, legend_title_size) +
     ggplot2::theme(
       strip.text = ggplot2::element_text(face = "bold", hjust = 0),
+      axis.title.y = ggplot2::element_text(
+        margin = ggplot2::margin(r = 12)
+      ),
       panel.spacing.x = grid::unit(2, "lines"),
       panel.spacing.y = grid::unit(1.2, "lines"),
       panel.border = ggplot2::element_rect(
@@ -982,7 +987,7 @@ map_immunity <- function(
   scale_top <- max(pretty(c(0, max(data$susceptible_pct, na.rm = TRUE))))
 
   if (type == "gradient") {
-    return(sntutils::facetted_map_gradient(
+    plot <- sntutils::facetted_map_gradient(
       data = data,
       fill_col = "susceptible_pct",
       colors = get_palette(palette),
@@ -994,15 +999,12 @@ map_immunity <- function(
       caption = caption,
       fill_label = "Susceptible (%)",
       ncol = ncol,
-      output_file = output_file,
-      width = width,
-      height = height,
-      dpi = dpi,
-      scale = scale,
       title_size = title_size,
       subtitle_size = subtitle_size,
-      legend_title_size = legend_title_size,
-      compress_image = compress_image
+      legend_title_size = legend_title_size
+    )
+    return(.finish_map(
+      plot, output_file, width, height, dpi, scale, compress_image
     ))
   }
 
@@ -1020,7 +1022,7 @@ map_immunity <- function(
     )
   fill_colors <- stats::setNames(bands$colour, bands$label)
 
-  sntutils::facetted_map_bins(
+  plot <- sntutils::facetted_map_bins(
     data = data,
     fill_col = "band",
     facet_col = "panel",
@@ -1031,16 +1033,30 @@ map_immunity <- function(
     caption = caption,
     fill_label = "Susceptible (%)",
     ncol = ncol,
-    output_file = output_file,
-    width = width,
-    height = height,
-    dpi = dpi,
-    scale = scale,
     title_size = title_size,
     subtitle_size = subtitle_size,
-    legend_title_size = legend_title_size,
-    compress_image = compress_image
+    legend_title_size = legend_title_size
   )
+  .finish_map(plot, output_file, width, height, dpi, scale, compress_image)
+}
+
+# internal helper: give a map a white background and save it when asked
+#' @noRd
+.finish_map <- function(plot, output_file, width, height, dpi, scale,
+                        compress_image) {
+  plot <- plot +
+    ggplot2::theme(
+      plot.background = ggplot2::element_rect(fill = "white", colour = NA),
+      panel.background = ggplot2::element_rect(fill = "white", colour = NA)
+    )
+  if (!is.null(output_file)) {
+    save_plot(
+      plot, output_file,
+      width = width, height = height, dpi = dpi, scale = scale,
+      compress = compress_image
+    )
+  }
+  plot
 }
 
 # internal helper: labels and colours for percent bins, spread evenly along
