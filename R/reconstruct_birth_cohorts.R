@@ -160,13 +160,17 @@ reconstruct_birth_cohorts <- function(
     cli::cli_abort("{.arg tolerance} must be a single number, 0 or more.")
   }
 
-  anchors <- .make_anchors(data, geography, year, age, population, ref_date)
-  anchors <- .check_anchors(anchors)
-  key <- .geography_key(anchors, geography)
-  geo_lookup <- anchors[!duplicated(key), geography, drop = FALSE]
-  geo_lookup$.key <- key[!duplicated(key)]
-  anchors$.key <- key
-  anchors$.anchor <- seq_len(nrow(anchors))
+  anchors <- .make_anchors(data, geography, year, age, population, ref_date) |>
+    .check_anchors()
+
+  # one integer key per geography, in sorted order
+  geo_lookup <- anchors |>
+    dplyr::distinct(dplyr::across(dplyr::all_of(geography))) |>
+    dplyr::arrange(dplyr::across(dplyr::all_of(geography))) |>
+    dplyr::mutate(.key = dplyr::row_number())
+  anchors <- anchors |>
+    dplyr::left_join(geo_lookup, by = geography) |>
+    dplyr::mutate(.anchor = dplyr::row_number())
 
   pieces <- .anchor_pieces(anchors)
   start_index <- if (is.null(start)) {
@@ -192,20 +196,20 @@ reconstruct_birth_cohorts <- function(
       last_month = max(end_index, .month_index(max(anchors$ref_date)))
     )
   }
-  pieces$survival <- .survival_at(
-    survival, pieces$birth_index, pieces$ref_index - pieces$birth_index
-  )
-  pieces <- .share_anchors(pieces, season)
-  obs <- .cohort_observations(pieces)
-  obs$survival <- .survival_at(
-    survival, obs$birth_index, obs$ref_index - obs$birth_index
-  )
+  pieces <- pieces |>
+    dplyr::mutate(age_months = .data$ref_index - .data$birth_index) |>
+    .add_survival(survival) |>
+    .share_anchors(season)
+  obs <- .cohort_observations(pieces) |>
+    dplyr::mutate(age_months = .data$ref_index - .data$birth_index) |>
+    .add_survival(survival) |>
+    dplyr::select(-"age_months")
 
   iterations <- NA_integer_
   if (method == "uniform") {
     panel <- .uniform_panel(obs, start_index, end_index, max_age_months)
-    fitted <- obs[, c(".key", "birth_index", "ref_index")]
-    fitted$fitted <- obs$population
+    fitted <- obs |>
+      dplyr::select(".key", "birth_index", "ref_index", fitted = "population")
     birth_table <- NULL
   } else {
     births_est <- .births_from_pieces(pieces)
@@ -214,59 +218,59 @@ reconstruct_birth_cohorts <- function(
       births_est <- fit$births
       iterations <- fit$iterations
     }
-    births_est$basis <- "anchored"
-    births_est <- rbind(
+    births_est <- dplyr::mutate(births_est, basis = "anchored")
+    births_est <- dplyr::bind_rows(
       births_est,
       .extend_births(births_est, end_index, season, births)
     )
     panel <- .survival_panel(
       births_est, survival, start_index, end_index, max_age_months
     )
-    fitted <- obs[, c(".key", "birth_index", "ref_index")]
-    fitted$fitted <- births_est$births[
-      match(
-        paste(fitted$.key, fitted$birth_index),
-        paste(births_est$.key, births_est$birth_index)
+    fitted <- obs |>
+      dplyr::left_join(
+        dplyr::select(births_est, ".key", "birth_index", "births"),
+        by = c(".key", "birth_index")
+      ) |>
+      dplyr::transmute(
+        .data$.key, .data$birth_index, .data$ref_index,
+        fitted = .data$births * .data$survival
       )
-    ] * obs$survival
-    birth_table <- merge(geo_lookup, births_est, by = ".key")
-    birth_table <- birth_table[
-      order(birth_table$.key, birth_table$birth_index),
-    ]
-    birth_table <- data.frame(
-      birth_table[, geography, drop = FALSE],
-      birth_month = .month_from_index(birth_table$birth_index),
-      births = birth_table$births,
-      basis = birth_table$basis
-    )
-    rownames(birth_table) <- NULL
+    birth_table <- births_est |>
+      dplyr::inner_join(geo_lookup, by = ".key") |>
+      dplyr::arrange(.data$.key, .data$birth_index) |>
+      dplyr::transmute(
+        dplyr::across(dplyr::all_of(geography)),
+        birth_month = .month_from_index(.data$birth_index),
+        .data$births,
+        .data$basis
+      )
   }
 
-  panel <- merge(geo_lookup, panel, by = ".key")
-  panel <- panel[order(panel$.key, panel$birth_index, panel$month_index), ]
-  cohorts <- data.frame(
-    panel[, geography, drop = FALSE],
-    birth_month = .month_from_index(panel$birth_index),
-    month = .month_from_index(panel$month_index),
-    age_months = panel$month_index - panel$birth_index,
-    population = panel$population,
-    basis = panel$basis
-  )
-  rownames(cohorts) <- NULL
+  cohorts <- panel |>
+    dplyr::inner_join(geo_lookup, by = ".key") |>
+    dplyr::arrange(.data$.key, .data$birth_index, .data$month_index) |>
+    dplyr::transmute(
+      dplyr::across(dplyr::all_of(geography)),
+      birth_month = .month_from_index(.data$birth_index),
+      month = .month_from_index(.data$month_index),
+      age_months = .data$month_index - .data$birth_index,
+      .data$population,
+      .data$basis
+    )
 
-  changes <- merge(geo_lookup, .cohort_changes(obs), by = ".key")
-  changes <- changes[order(changes$.key, changes$birth_index), ]
-  changes <- data.frame(
-    changes[, geography, drop = FALSE],
-    birth_month = .month_from_index(changes$birth_index),
-    changes[, c(
-      "from_date", "to_date", "from_population", "to_population",
-      "observed_change", "expected_change", "unexplained_change"
-    )]
-  )
-  rownames(changes) <- NULL
+  changes <- .cohort_changes(obs) |>
+    dplyr::inner_join(geo_lookup, by = ".key") |>
+    dplyr::arrange(.data$.key, .data$birth_index) |>
+    dplyr::transmute(
+      dplyr::across(dplyr::all_of(geography)),
+      birth_month = .month_from_index(.data$birth_index),
+      dplyr::across(c(
+        "from_date", "to_date", "from_population", "to_population",
+        "observed_change", "expected_change", "unexplained_change"
+      ))
+    )
 
-  out <- list(
+  list(
     cohorts = cohorts,
     births = birth_table,
     cohort_changes = changes,
@@ -274,8 +278,8 @@ reconstruct_birth_cohorts <- function(
     metadata = .cohort_metadata(
       method, seasonality, births, tolerance, iterations
     )
-  )
-  out[!vapply(out, is.null, logical(1))]
+  ) |>
+    purrr::compact()
 }
 
 # internal helper: turn population by single year of age into anchors, with
@@ -307,13 +311,20 @@ reconstruct_birth_cohorts <- function(
     cli::cli_abort("{.arg age} must hold whole years of age, 0 or more.")
   }
 
-  out <- data[, geography, drop = FALSE]
-  out$ref_date <- .as_date(paste0(data[[year]], "-", ref_values), "ref_date")
-  out$age_lower <- as.integer(data[[age]]) * 12L
-  out$age_upper <- out$age_lower + 12L
-  out$population <- as.numeric(data[[population]])
-  rownames(out) <- NULL
-  out
+  # take the values out first so argument names cannot mask columns
+  anchor_dates <- .as_date(paste0(data[[year]], "-", ref_values), "ref_date")
+  anchor_pop <- as.numeric(data[[population]])
+
+  # a new table of the geography columns, without the input's attributes
+  purrr::set_names(geography) |>
+    purrr::map(\(column) data[[column]]) |>
+    dplyr::as_tibble() |>
+    dplyr::mutate(
+      ref_date = anchor_dates,
+      age_lower = as.integer(ages) * 12L,
+      age_upper = .data$age_lower + 12L,
+      population = anchor_pop
+    )
 }
 
 # internal helper: check anchor populations
@@ -340,36 +351,46 @@ reconstruct_birth_cohorts <- function(
   seasonality / mean(seasonality)
 }
 
+# internal helper: relative birth frequency of the calendar month of each
+# month index
 #' @noRd
-.geography_key <- function(data, geography) {
-  do.call(paste, c(unname(as.list(data[geography])), sep = "\r"))
+.season_at <- function(season, index) {
+  season[index %% 12L + 1L]
 }
 
 # internal helper: split each anchor across the birth months its window
 # covers. births are in [from, to), and overlap is in days
 #' @noRd
 .anchor_pieces <- function(anchors) {
-  from <- .add_months(anchors$ref_date, -anchors$age_upper)
-  to <- .add_months(anchors$ref_date, -anchors$age_lower)
-  first <- .month_index(from)
-  last <- .month_index(to - 1L)
-  n <- last - first + 1L
-
-  i <- rep(seq_len(nrow(anchors)), n)
-  birth_index <- first[i] + sequence(n) - 1L
-  month_start <- .month_from_index(birth_index)
-  month_end <- .month_from_index(birth_index + 1L)
-
-  data.frame(
-    .anchor = anchors$.anchor[i],
-    .key = anchors$.key[i],
-    ref_date = anchors$ref_date[i],
-    ref_index = .month_index(anchors$ref_date[i]),
-    birth_index = birth_index,
-    overlap = as.numeric(pmin(month_end, to[i]) - pmax(month_start, from[i])),
-    days = .days_in_month(birth_index),
-    anchor_population = anchors$population[i]
+  windows <- anchors |>
+    dplyr::mutate(
+      from = .add_months(.data$ref_date, -.data$age_upper),
+      to = .add_months(.data$ref_date, -.data$age_lower),
+      first = .month_index(.data$from),
+      last = .month_index(.data$to - 1L)
+    )
+  months <- dplyr::tibble(
+    birth_index = seq.int(min(windows$first), max(windows$last))
   )
+
+  windows |>
+    dplyr::inner_join(
+      months,
+      by = dplyr::join_by("first" <= "birth_index", "last" >= "birth_index")
+    ) |>
+    dplyr::transmute(
+      .data$.anchor,
+      .data$.key,
+      .data$ref_date,
+      ref_index = .month_index(.data$ref_date),
+      .data$birth_index,
+      overlap = as.numeric(
+        pmin(.month_from_index(.data$birth_index + 1L), .data$to) -
+          pmax(.month_from_index(.data$birth_index), .data$from)
+      ),
+      days = .days_in_month(.data$birth_index),
+      anchor_population = .data$population
+    )
 }
 
 # internal helper: share each anchor across its birth months by days,
@@ -377,50 +398,67 @@ reconstruct_birth_cohorts <- function(
 # population in the piece; cohort_size scales it to the whole birth month
 #' @noRd
 .share_anchors <- function(pieces, season) {
-  weight <- pieces$overlap * season[pieces$birth_index %% 12L + 1L] *
-    pieces$survival
-  total <- rowsum(weight, pieces$.anchor, reorder = FALSE)
-  total <- total[match(pieces$.anchor, rownames(total))]
-  pieces$count <- ifelse(
-    total > 0, pieces$anchor_population * weight / total, 0
-  )
-  pieces$cohort_size <- pieces$count * pieces$days / pieces$overlap
-  pieces
+  pieces |>
+    dplyr::mutate(
+      weight = .data$overlap * .season_at(season, .data$birth_index) *
+        .data$survival
+    ) |>
+    dplyr::mutate(
+      dplyr::across("weight", sum, .names = "total"),
+      .by = ".anchor"
+    ) |>
+    dplyr::mutate(
+      count = dplyr::if_else(
+        .data$total > 0,
+        .data$anchor_population * .data$weight / .data$total,
+        0
+      ),
+      cohort_size = .data$count * .data$days / .data$overlap
+    ) |>
+    dplyr::select(-"weight", -"total")
 }
 
 # internal helper: size of each cohort on each anchor date, averaging
 # anchors that share a cohort and date by days of overlap
 #' @noRd
 .cohort_observations <- function(pieces) {
-  pieces$weighted <- pieces$cohort_size * pieces$overlap
-  obs <- stats::aggregate(
-    cbind(weighted, overlap) ~ .key + birth_index + ref_date + ref_index,
-    data = pieces,
-    FUN = sum
-  )
-  obs$population <- obs$weighted / obs$overlap
-  obs <- obs[order(obs$.key, obs$birth_index, obs$ref_date), ]
-  rownames(obs) <- NULL
-  obs[, c(".key", "birth_index", "ref_date", "ref_index", "population")]
+  pieces |>
+    dplyr::mutate(weighted = .data$cohort_size * .data$overlap) |>
+    dplyr::summarise(
+      dplyr::across(c("weighted", "overlap"), sum),
+      .by = c(".key", "birth_index", "ref_date", "ref_index")
+    ) |>
+    dplyr::mutate(population = .data$weighted / .data$overlap) |>
+    dplyr::arrange(.data$.key, .data$birth_index, .data$ref_date) |>
+    dplyr::select(".key", "birth_index", "ref_date", "ref_index", "population")
+}
+
+# internal helper: births a piece implies, its cohort size undone for
+# survival to the reference date
+#' @noRd
+.implied_births <- function(pieces) {
+  pieces |>
+    dplyr::mutate(
+      implied = dplyr::if_else(
+        .data$survival > 0, .data$cohort_size / .data$survival, 0
+      )
+    )
 }
 
 # internal helper: births per cohort implied by its anchors, averaged by
 # days of overlap
 #' @noRd
 .births_from_pieces <- function(pieces) {
-  pieces$implied <- ifelse(
-    pieces$survival > 0, pieces$cohort_size / pieces$survival, 0
-  )
-  pieces$weighted <- pieces$implied * pieces$overlap
-  births <- stats::aggregate(
-    cbind(weighted, overlap) ~ .key + birth_index,
-    data = pieces,
-    FUN = sum
-  )
-  births$births <- births$weighted / births$overlap
-  births <- births[order(births$.key, births$birth_index), ]
-  rownames(births) <- NULL
-  births[, c(".key", "birth_index", "births")]
+  pieces |>
+    .implied_births() |>
+    dplyr::mutate(weighted = .data$implied * .data$overlap) |>
+    dplyr::summarise(
+      dplyr::across(c("weighted", "overlap"), sum),
+      .by = c(".key", "birth_index")
+    ) |>
+    dplyr::mutate(births = .data$weighted / .data$overlap) |>
+    dplyr::arrange(.data$.key, .data$birth_index) |>
+    dplyr::select(".key", "birth_index", "births")
 }
 
 # internal helper: births as a weighted geometric mean of what each anchor
@@ -430,41 +468,73 @@ reconstruct_birth_cohorts <- function(
 # keeping a single solution
 #' @noRd
 .constrain_births <- function(births, pieces, tolerance, max_iter = 100L) {
-  cohort <- match(
-    paste(pieces$.key, pieces$birth_index),
-    paste(births$.key, births$birth_index)
-  )
-  implied <- ifelse(
-    pieces$survival > 0, pieces$cohort_size / pieces$survival, 0
-  )
-  log_implied <- log(pmax(implied, 1e-9))
-  share <- pieces$survival * pieces$overlap / pieces$days
-  anchor_ids <- unique(pieces$.anchor)
-  anchor_of <- match(pieces$.anchor, anchor_ids)
-  target <- pieces$anchor_population[match(anchor_ids, pieces$.anchor)]
   band <- log(1 + tolerance)
-  b <- births$births
-  iterations <- 0L
-
-  for (iter in seq_len(max_iter)) {
-    rebuilt <- as.vector(rowsum(b[cohort] * share, anchor_of))
-    error <- abs(log((rebuilt + 1e-9) / (target + 1e-9)))
-    weight <- ifelse(error <= band, 1, band / pmax(error, 1e-12))
-    w <- weight[anchor_of] * pieces$overlap
-    updated <- exp(
-      as.vector(rowsum(w * log_implied, cohort)) /
-        pmax(as.vector(rowsum(w, cohort)), 1e-12)
+  fit <- pieces |>
+    .implied_births() |>
+    dplyr::left_join(births, by = c(".key", "birth_index")) |>
+    dplyr::transmute(
+      .data$.anchor,
+      .data$.key,
+      .data$birth_index,
+      .data$overlap,
+      .data$births,
+      log_implied = log(pmax(.data$implied, 1e-9)),
+      share = .data$survival * .data$overlap / .data$days,
+      target = .data$anchor_population
     )
-    iterations <- iter
-    change <- max(abs(updated - b) / pmax(b, 1e-9))
-    b <- updated
-    if (change < 1e-6) {
-      break
-    }
-  }
 
-  births$births <- b
-  list(births = births, iterations = iterations)
+  # stop early once births change by less than the convergence limit
+  result <- purrr::reduce(
+    seq_len(max_iter),
+    \(state, iter) {
+      fit <- .huber_step(state$fit, band)
+      change <- max(abs(fit$updated - fit$births) / pmax(fit$births, 1e-9))
+      fit <- fit |>
+        dplyr::mutate(births = .data$updated) |>
+        dplyr::select(-"updated")
+      out <- list(fit = fit, iterations = iter)
+      if (change < 1e-6) purrr::done(out) else out
+    },
+    .init = list(fit = fit, iterations = 0L)
+  )
+
+  fitted <- result$fit |>
+    dplyr::select(".key", "birth_index", "births") |>
+    dplyr::distinct()
+  births <- births |>
+    dplyr::select(".key", "birth_index") |>
+    dplyr::left_join(fitted, by = c(".key", "birth_index"))
+  list(births = births, iterations = result$iterations)
+}
+
+# internal helper: one reweighting step. rebuild each anchor from the
+# current births, weight anchors by their log error, then refit each cohort
+#' @noRd
+.huber_step <- function(fit, band) {
+  fit |>
+    dplyr::mutate(contribution = .data$births * .data$share) |>
+    dplyr::mutate(
+      dplyr::across("contribution", sum, .names = "rebuilt"),
+      .by = ".anchor"
+    ) |>
+    dplyr::mutate(
+      error = abs(log((.data$rebuilt + 1e-9) / (.data$target + 1e-9))),
+      w = dplyr::if_else(
+        .data$error <= band, 1, band / pmax(.data$error, 1e-12)
+      ) * .data$overlap,
+      w_log = .data$w * .data$log_implied
+    ) |>
+    dplyr::mutate(
+      dplyr::across(c("w_log", "w"), sum, .names = "{.col}_sum"),
+      .by = c(".key", "birth_index")
+    ) |>
+    dplyr::mutate(
+      updated = exp(.data$w_log_sum / pmax(.data$w_sum, 1e-12))
+    ) |>
+    dplyr::select(
+      -"contribution", -"rebuilt", -"error", -"w", -"w_log",
+      -"w_log_sum", -"w_sum"
+    )
 }
 
 # internal helper: births for months after each geography's last anchored
@@ -472,54 +542,75 @@ reconstruct_birth_cohorts <- function(
 # adjusted for seasonality and the national births trend
 #' @noRd
 .extend_births <- function(births, end_index, season, national) {
-  pieces <- lapply(split(births, births$.key), function(g) {
-    last <- max(g$birth_index)
-    if (last >= end_index) {
-      return(NULL)
-    }
-    base <- g[g$birth_index > last - 12L, ]
-    per_day <- base$births /
-      (season[base$birth_index %% 12L + 1L] * .days_in_month(base$birth_index))
-    months <- seq.int(last + 1L, end_index)
-    trend <- .births_trend(national, months, base$birth_index)
-    data.frame(
-      .key = g$.key[1],
-      birth_index = months,
-      births = mean(per_day) * season[months %% 12L + 1L] *
-        .days_in_month(months) * trend,
-      basis = "extended"
-    )
-  })
-  out <- do.call(rbind, pieces)
-  if (is.null(out)) {
-    out <- births[0, ]
-    out$basis <- character(0)
+  last_anchored <- births |>
+    dplyr::summarise(
+      dplyr::across("birth_index", max, .names = "last"),
+      .by = ".key"
+    ) |>
+    dplyr::filter(.data$last < end_index)
+  if (nrow(last_anchored) == 0) {
+    return(dplyr::slice(births, 0))
   }
-  out
+
+  # per-day births and national births over each geography's last year of
+  # anchored months
+  base <- births |>
+    dplyr::inner_join(last_anchored, by = ".key") |>
+    dplyr::filter(.data$birth_index > .data$last - 12L) |>
+    dplyr::mutate(
+      per_day = .data$births / (
+        .season_at(season, .data$birth_index) *
+          .days_in_month(.data$birth_index)
+      ),
+      national_births = .national_births(national, .data$birth_index)
+    ) |>
+    dplyr::summarise(
+      dplyr::across(
+        c("per_day", "national_births"), mean, .names = "base_{.col}"
+      ),
+      .by = c(".key", "last")
+    )
+
+  months <- dplyr::tibble(
+    birth_index = seq.int(min(base$last) + 1L, end_index)
+  )
+  base |>
+    dplyr::inner_join(months, by = dplyr::join_by("last" < "birth_index")) |>
+    dplyr::mutate(
+      trend = .national_births(national, .data$birth_index) /
+        .data$base_national_births,
+      births = .data$base_per_day * .season_at(season, .data$birth_index) *
+        .days_in_month(.data$birth_index) * .data$trend,
+      basis = "extended"
+    ) |>
+    dplyr::select(".key", "birth_index", "births", "basis")
 }
 
-# internal helper: national births in each month's year relative to the
-# mean over the base months' years; 1 when no births table is given
+# internal helper: national births in the year of each month index, using
+# the nearest year in the table; 1 when no births table is given
 #' @noRd
-.births_trend <- function(national, months, base_months) {
+.national_births <- function(national, index) {
   if (is.null(national)) {
-    return(rep(1, length(months)))
+    return(rep(1, length(index)))
   }
   if (!all(c("year", "births") %in% names(national))) {
     cli::cli_abort(
       "{.arg births} must have columns {.val year} and {.val births}."
     )
   }
-  lookup <- function(index) {
-    yr <- index %/% 12L
-    yr <- pmin(pmax(yr, min(national$year)), max(national$year))
-    national$births[match(yr, national$year)]
-  }
-  lookup(months) / mean(lookup(base_months))
+  by_year <- national |>
+    dplyr::filter(!duplicated(.data$year)) |>
+    dplyr::select("year", "births")
+
+  dplyr::tibble(
+    year = pmin(pmax(index %/% 12L, min(national$year)), max(national$year))
+  ) |>
+    dplyr::left_join(by_year, by = "year") |>
+    dplyr::pull("births")
 }
 
-# internal helper: monthly survival from birth, as log cumulative survival
-# by birth month (rows) and completed months of age (columns, from 0)
+# internal helper: monthly survival from birth, one row per birth month and
+# completed month of age (from 0) up to the last month needed
 #' @noRd
 .survival_table <- function(mortality, first_birth, last_month) {
   needed <- c("year", "age", "mx")
@@ -532,35 +623,76 @@ reconstruct_birth_cohorts <- function(
     cli::cli_abort("{.arg mortality} {.val mx} must be 0 or more, without NA.")
   }
 
-  years <- sort(unique(mortality$year))
-  ages <- 0:max(mortality$age)
-  mx <- matrix(NA_real_, length(ages), length(years))
-  mx[cbind(mortality$age + 1L, match(mortality$year, years))] <- mortality$mx
-  if (anyNA(mx)) {
+  # every single age from 0 for each year; a repeated row uses the last
+  rates <- tidyr::expand_grid(
+    year = sort(unique(mortality$year)),
+    age = 0:max(mortality$age)
+  ) |>
+    dplyr::left_join(
+      mortality |>
+        dplyr::summarise(
+          dplyr::across("mx", dplyr::last),
+          .by = c("year", "age")
+        ),
+      by = c("year", "age")
+    )
+  if (anyNA(rates$mx)) {
     cli::cli_abort(
       "{.arg mortality} must have every age from 0 for each year."
     )
   }
+  first_year <- min(rates$year)
+  last_year <- max(rates$year)
+  oldest <- max(rates$age)
+  infant <- rates |>
+    dplyr::filter(.data$age == 0) |>
+    dplyr::select("year", m0 = "mx")
 
-  births <- seq.int(first_birth, last_month)
-  max_age <- last_month - first_birth
-  log_s <- matrix(0, length(births), max_age + 1L)
+  # log survival over each month of age, summed along each birth cohort
+  steps <- tidyr::expand_grid(
+    birth_index = seq.int(first_birth, last_month),
+    age_months = seq_len(last_month - first_birth) - 1L
+  ) |>
+    dplyr::filter(.data$birth_index + .data$age_months < last_month) |>
+    dplyr::mutate(
+      year = pmin(
+        pmax((.data$birth_index + .data$age_months) %/% 12L, first_year),
+        last_year
+      ),
+      rate_age = pmin(.data$age_months %/% 12L, oldest)
+    ) |>
+    dplyr::left_join(infant, by = "year") |>
+    dplyr::left_join(rates, by = c("year", rate_age = "age")) |>
+    dplyr::mutate(
+      step = dplyr::if_else(
+        .data$age_months < 12L,
+        log(.infant_survival(.data$m0, .data$age_months)),
+        -.data$mx / 12
+      )
+    ) |>
+    dplyr::arrange(.data$birth_index, .data$age_months) |>
+    dplyr::mutate(
+      dplyr::across("step", cumsum, .names = "log_s"),
+      .by = "birth_index"
+    ) |>
+    dplyr::transmute(
+      .data$birth_index,
+      age_months = .data$age_months + 1L,
+      .data$log_s
+    )
 
-  for (a in seq_len(max_age)) {
-    month <- births + a - 1L
-    yr <- pmin(pmax(month %/% 12L, min(years)), max(years))
-    col <- match(yr, years)
-    age_months <- a - 1L
-    if (age_months < 12L) {
-      step <- log(.infant_survival(mx[1, col], age_months))
-    } else {
-      age_years <- pmin(age_months %/% 12L, max(ages))
-      step <- -mx[cbind(age_years + 1L, col)] / 12
-    }
-    log_s[, a + 1L] <- log_s[, a] + step
-  }
-
-  list(first_birth = first_birth, log_s = log_s)
+  dplyr::tibble(
+    birth_index = seq.int(first_birth, last_month),
+    age_months = 0L,
+    log_s = 0
+  ) |>
+    dplyr::bind_rows(steps) |>
+    dplyr::transmute(
+      .data$birth_index,
+      .data$age_months,
+      month_index = .data$birth_index + .data$age_months,
+      survival = exp(.data$log_s)
+    )
 }
 
 # internal helper: monthly survival in the first year of life. the infant
@@ -568,58 +700,72 @@ reconstruct_birth_cohorts <- function(
 # half of infant deaths fall in month 0 and the rest evenly over months 1-11
 #' @noRd
 .infant_survival <- function(m0, age_months) {
-  a0 <- ifelse(m0 >= 0.107, 0.34, 0.049 + 2.742 * m0)
+  a0 <- dplyr::if_else(m0 >= 0.107, 0.34, 0.049 + 2.742 * m0)
   q0 <- m0 / (1 + (1 - a0) * m0)
   first <- 1 - 0.5 * q0
-  if (age_months == 0L) {
-    return(first)
-  }
-  ((1 - q0) / first)^(1 / 11)
+  first_month <- rep_len(
+    age_months == 0L, max(length(m0), length(age_months))
+  )
+  dplyr::if_else(first_month, first, ((1 - q0) / first)^(1 / 11))
 }
 
-# internal helper: survival from birth to an age in completed months; 1
-# when no survival table is used
+# internal helper: add survival from birth to `age_months` (completed
+# months); 1 when no survival table is used
 #' @noRd
-.survival_at <- function(survival, birth_index, age_months) {
+.add_survival <- function(data, survival) {
   if (is.null(survival)) {
-    return(rep(1, length(birth_index)))
+    return(dplyr::mutate(data, survival = 1))
   }
-  row <- birth_index - survival$first_birth + 1L
-  col <- pmax(age_months, 0L) + 1L
-  exp(survival$log_s[cbind(row, col)])
+  data |>
+    dplyr::mutate(.age = pmax(.data$age_months, 0L)) |>
+    dplyr::left_join(
+      dplyr::select(survival, "birth_index", .age = "age_months", "survival"),
+      by = c("birth_index", ".age")
+    ) |>
+    dplyr::select(-".age")
 }
 
 # internal helper: rows for each cohort's months within the output range
 #' @noRd
-.panel_rows <- function(.key, birth_index, start_index, end_index,
-                        max_age_months) {
-  first <- pmax(birth_index, start_index)
-  last <- pmin(end_index, birth_index + max_age_months)
-  n <- pmax(last - first + 1L, 0L)
-  i <- rep(seq_along(birth_index), n)
-  data.frame(
-    .cohort = i,
-    .key = .key[i],
-    birth_index = birth_index[i],
-    month_index = first[i] + sequence(n) - 1L
-  )
+.panel_rows <- function(cohorts, start_index, end_index, max_age_months) {
+  months <- dplyr::tibble(month_index = seq.int(start_index, end_index))
+  cohorts |>
+    dplyr::mutate(
+      first = pmax(.data$birth_index, start_index),
+      last = pmin(end_index, .data$birth_index + max_age_months)
+    ) |>
+    dplyr::inner_join(
+      months,
+      by = dplyr::join_by("first" <= "month_index", "last" >= "month_index")
+    ) |>
+    dplyr::select(-"first", -"last")
 }
 
 # internal helper: cohort sizes by month from births and survival
 #' @noRd
 .survival_panel <- function(births, survival, start_index, end_index,
                             max_age_months) {
-  panel <- .panel_rows(
-    births$.key, births$birth_index, start_index, end_index, max_age_months
-  )
+  in_range <- survival |>
+    dplyr::filter(
+      .data$month_index >= start_index,
+      .data$month_index <= end_index,
+      .data$age_months <= max_age_months
+    )
+  panel <- births |>
+    dplyr::inner_join(
+      in_range,
+      by = "birth_index", relationship = "many-to-many"
+    ) |>
+    dplyr::transmute(
+      .data$.key,
+      .data$birth_index,
+      .data$month_index,
+      population = .data$births * .data$survival,
+      .data$basis
+    )
   if (nrow(panel) == 0) {
     cli::cli_abort("No cohorts fall within {.arg start} and {.arg end}.")
   }
-  panel$population <- births$births[panel$.cohort] * .survival_at(
-    survival, panel$birth_index, panel$month_index - panel$birth_index
-  )
-  panel$basis <- births$basis[panel$.cohort]
-  panel$.cohort <- NULL
   panel
 }
 
@@ -627,97 +773,112 @@ reconstruct_birth_cohorts <- function(
 # between its anchor dates, holding the nearest value outside them
 #' @noRd
 .uniform_panel <- function(obs, start_index, end_index, max_age_months) {
-  cohort_id <- paste(obs$.key, obs$birth_index)
-  cohorts <- obs[!duplicated(cohort_id), c(".key", "birth_index")]
-  cid <- match(cohort_id, paste(cohorts$.key, cohorts$birth_index))
-
-  panel <- .panel_rows(
-    cohorts$.key, cohorts$birth_index, start_index, end_index, max_age_months
-  )
+  cohorts <- obs |>
+    dplyr::select(".key", "birth_index") |>
+    dplyr::distinct()
+  panel <- .panel_rows(cohorts, start_index, end_index, max_age_months)
   if (nrow(panel) == 0) {
     cli::cli_abort("No cohorts fall within {.arg start} and {.arg end}.")
   }
 
-  # place each cohort on its own stretch of the number line, then find the
-  # anchor dates either side of each month
-  offset <- 1e6
-  obs_x <- cid * offset + as.numeric(obs$ref_date)
-  mid <- as.numeric(.month_from_index(panel$month_index) + 14L)
-  panel_x <- panel$.cohort * offset + mid
-  ord <- order(obs_x)
-  obs_x <- obs_x[ord]
-  obs_y <- obs$population[ord]
-  obs_c <- cid[ord]
+  # the anchor dates at or before and after the middle of each month
+  points <- obs |>
+    dplyr::transmute(
+      .data$.key,
+      .data$birth_index,
+      x = as.numeric(.data$ref_date),
+      y = .data$population
+    )
+  before <- dplyr::rename(points, x_before = "x", y_before = "y")
+  after <- dplyr::rename(points, x_after = "x", y_after = "y")
 
-  first_of <- match(seq_len(nrow(cohorts)), obs_c)
-  last_of <- length(obs_c) + 1L - match(seq_len(nrow(cohorts)), rev(obs_c))
-  lo <- findInterval(panel_x, obs_x)
-  lo[lo == 0L | obs_c[pmax(lo, 1L)] != panel$.cohort] <- NA_integer_
-  hi <- ifelse(!is.na(lo) & lo < last_of[panel$.cohort], lo + 1L, NA_integer_)
-
-  population <- obs_y[last_of[panel$.cohort]]
-  before <- is.na(lo)
-  population[before] <- obs_y[first_of[panel$.cohort[before]]]
-  between <- !is.na(lo) & !is.na(hi)
-  w <- (panel_x[between] - obs_x[lo[between]]) /
-    (obs_x[hi[between]] - obs_x[lo[between]])
-  population[between] <- obs_y[lo[between]] +
-    w * (obs_y[hi[between]] - obs_y[lo[between]])
-
-  panel$population <- population
-  panel$basis <- "anchored"
-  panel$.cohort <- NULL
-  panel
+  panel |>
+    dplyr::mutate(
+      mid = as.numeric(.month_from_index(.data$month_index) + 14L)
+    ) |>
+    dplyr::left_join(
+      before,
+      by = dplyr::join_by(".key", "birth_index", closest("mid" >= "x_before"))
+    ) |>
+    dplyr::left_join(
+      after,
+      by = dplyr::join_by(".key", "birth_index", closest("mid" < "x_after"))
+    ) |>
+    dplyr::mutate(
+      population = dplyr::case_when(
+        is.na(.data$x_before) ~ .data$y_after,
+        is.na(.data$x_after) ~ .data$y_before,
+        .default = .data$y_before +
+          (.data$mid - .data$x_before) / (.data$x_after - .data$x_before) *
+            (.data$y_after - .data$y_before)
+      ),
+      basis = "anchored"
+    ) |>
+    dplyr::select(".key", "birth_index", "month_index", "population", "basis")
 }
 
 # internal helper: change in each cohort between consecutive anchor dates,
 # split into the part survival explains and the unexplained remainder
 #' @noRd
 .cohort_changes <- function(obs) {
-  same <- c(FALSE, obs$.key[-1] == obs$.key[-nrow(obs)] &
-    obs$birth_index[-1] == obs$birth_index[-nrow(obs)])
-  to <- which(same)
-  from <- to - 1L
-  observed <- obs$population[to] / obs$population[from]
-  expected <- obs$survival[to] / obs$survival[from]
-  data.frame(
-    .key = obs$.key[to],
-    birth_index = obs$birth_index[to],
-    from_date = obs$ref_date[from],
-    to_date = obs$ref_date[to],
-    from_population = obs$population[from],
-    to_population = obs$population[to],
-    observed_change = observed - 1,
-    expected_change = expected - 1,
-    unexplained_change = observed / expected - 1
-  )
+  obs |>
+    dplyr::mutate(
+      same_cohort = .data$.key == dplyr::lag(.data$.key) &
+        .data$birth_index == dplyr::lag(.data$birth_index),
+      from_date = dplyr::lag(.data$ref_date),
+      from_population = dplyr::lag(.data$population),
+      from_survival = dplyr::lag(.data$survival)
+    ) |>
+    dplyr::filter(.data$same_cohort) |>
+    dplyr::mutate(
+      observed = .data$population / .data$from_population,
+      expected = .data$survival / .data$from_survival
+    ) |>
+    dplyr::transmute(
+      .data$.key,
+      .data$birth_index,
+      .data$from_date,
+      to_date = .data$ref_date,
+      .data$from_population,
+      to_population = .data$population,
+      observed_change = .data$observed - 1,
+      expected_change = .data$expected - 1,
+      unexplained_change = .data$observed / .data$expected - 1
+    )
 }
 
 # internal helper: rebuild each anchor from the fitted cohort sizes on its
 # reference date
 #' @noRd
 .anchor_check <- function(anchors, pieces, fitted, geography, tolerance) {
-  matched <- merge(
-    pieces[, c(".anchor", ".key", "birth_index", "ref_index", "overlap",
-               "days")],
-    fitted,
-    by = c(".key", "birth_index", "ref_index")
-  )
-  matched$rebuilt <- matched$fitted * matched$overlap / matched$days
-  rebuilt <- rowsum(matched$rebuilt, matched$.anchor)
+  rebuilt <- pieces |>
+    dplyr::select(
+      ".anchor", ".key", "birth_index", "ref_index", "overlap", "days"
+    ) |>
+    dplyr::inner_join(
+      fitted,
+      by = c(".key", "birth_index", "ref_index"),
+      relationship = "many-to-many"
+    ) |>
+    dplyr::mutate(rebuilt = .data$fitted * .data$overlap / .data$days) |>
+    dplyr::summarise(dplyr::across("rebuilt", sum), .by = ".anchor")
 
-  out <- anchors[, c(geography, "ref_date", "age_lower", "age_upper",
-                     "population")]
-  out$rebuilt <- as.vector(rebuilt)[
-    match(anchors$.anchor, as.integer(rownames(rebuilt)))
-  ]
-  out$difference <- out$rebuilt - out$population
-  out$relative_difference <- ifelse(
-    out$population > 0, out$difference / out$population, NA_real_
-  )
-  out$within_tolerance <- abs(out$relative_difference) <= tolerance + 1e-9
-  rownames(out) <- NULL
-  out
+  anchors |>
+    dplyr::left_join(rebuilt, by = ".anchor") |>
+    dplyr::mutate(
+      difference = .data$rebuilt - .data$population,
+      relative_difference = dplyr::if_else(
+        .data$population > 0,
+        .data$difference / .data$population,
+        NA_real_
+      ),
+      within_tolerance = abs(.data$relative_difference) <= tolerance + 1e-9
+    ) |>
+    dplyr::select(
+      dplyr::all_of(geography), "ref_date", "age_lower", "age_upper",
+      "population", "rebuilt", "difference", "relative_difference",
+      "within_tolerance"
+    )
 }
 
 #' @noRd
@@ -820,24 +981,34 @@ cohort_eligibility <- function(
   }
 
   index <- .month_index(.as_date(birth_month, "birth_month"))
-  unique_index <- unique(index)
+  midmonth <- convention == "midmonth"
+  age_min <- age_min_months
+  age_max <- age_max_months
 
-  share <- vapply(unique_index, function(m) {
-    days <- if (convention == "midmonth") {
-      .month_from_index(m) + 14L
-    } else {
-      .month_from_index(m) + seq_len(.days_in_month(m)) - 1L
-    }
-    old_enough <- .add_months(days, age_min_months) <= end
-    young_enough <- if (is.finite(age_max_months)) {
-      .add_months(days, age_max_months) > start
-    } else {
-      TRUE
-    }
-    mean(old_enough & young_enough)
-  }, numeric(1))
+  # one row per day of birth in each distinct birth month
+  shares <- dplyr::tibble(index = unique(index)) |>
+    dplyr::mutate(
+      n_days = if (midmonth) 1L else .days_in_month(.data$index)
+    ) |>
+    tidyr::uncount(.data$n_days, .id = "day") |>
+    dplyr::mutate(
+      birth_date = .month_from_index(.data$index) +
+        if (midmonth) 14L else .data$day - 1L,
+      old_enough = .add_months(.data$birth_date, age_min) <= end,
+      young_enough = if (is.finite(age_max)) {
+        .add_months(.data$birth_date, age_max) > start
+      } else {
+        TRUE
+      }
+    ) |>
+    dplyr::summarise(
+      share = mean(.data$old_enough & .data$young_enough),
+      .by = "index"
+    )
 
-  share[match(index, unique_index)]
+  dplyr::tibble(index = index) |>
+    dplyr::left_join(shares, by = "index") |>
+    dplyr::pull("share")
 }
 
 # date helpers -----------------------------------------------------------------
