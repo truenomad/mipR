@@ -228,6 +228,27 @@ ipccs_survey <- dplyr::bind_rows(
   )
 
 ## ---------------------------------------------------------------------------##
+# 2017-2018 campaign calendar --------------------------------------------------
+## ---------------------------------------------------------------------------##
+
+# the PMCCS report gives the target age but no campaign dates by state, only
+# "October to December 2017 and February/March 2018 for the Northern and
+# Southern States respectively"; dates are left missing for completion by
+# hand rather than inferred from those periods
+pmccs_calendar <- pmccs_survey |>
+  dplyr::distinct(campaign_id, adm1_raw) |>
+  dplyr::mutate(
+    start_date = as.Date(NA),
+    end_date = as.Date(NA),
+    target_age = "9-59 months",
+    source = "PMCCS 2018 report",
+    note = paste(
+      "state dates not given in the report; campaign ran October to",
+      "December 2017 (north) and February to March 2018 (south)"
+    )
+  )
+
+## ---------------------------------------------------------------------------##
 # 2024 campaign dates by state -------------------------------------------------
 ## ---------------------------------------------------------------------------##
 
@@ -258,8 +279,12 @@ sia_calendar <- tibble::tibble(
     paste(campaign_dates[, 4], campaign_dates[, 5], campaign_dates[, 6]),
     format = "%d %b %Y"
   ),
-  target_age = "9-59 months"
+  target_age = "9-59 months",
+  source = "IPCCS 2024 report, Table 1.1",
+  note = NA_character_
 )
+
+sia_calendar <- dplyr::bind_rows(pmccs_calendar, sia_calendar)
 
 ## ---------------------------------------------------------------------------##
 # 2024 measles surveillance by state -------------------------------------------
@@ -284,7 +309,8 @@ adm1_lookup <- shp |>
   sf::st_drop_geometry() |>
   dplyr::distinct(adm0, adm1, adm1_code)
 
-# match each report spelling once; decisions are kept in the cache file
+# match report spellings to the boundaries without prompting; names that
+# cannot be matched are flagged by prepare_campaigns() as unmatched
 adm1_names <- dplyr::bind_rows(
   pmccs_survey, ipccs_survey, sia_calendar, measles_cases
 ) |>
@@ -299,7 +325,8 @@ adm1_names <- sntutils::prep_geonames(
   level0 = "adm0",
   level1 = "adm1",
   cache_path = name_cache,
-  preserve_case = TRUE
+  preserve_case = TRUE,
+  interactive = FALSE
 ) |>
   dplyr::left_join(adm1_lookup, by = c("adm0", "adm1"))
 
@@ -318,6 +345,22 @@ sia_calendar <- add_adm1(sia_calendar)
 measles_cases <- add_adm1(measles_cases)
 
 ## ---------------------------------------------------------------------------##
+# Campaign records -------------------------------------------------------------
+## ---------------------------------------------------------------------------##
+
+# one record per state and campaign, survey indicators kept separately, and
+# a list of problems to resolve (missing 2017-2018 dates among them)
+campaigns <- mipR::prepare_campaigns(
+  calendar = sia_calendar,
+  evaluation = sia_survey,
+  geography = c("adm0", "adm1", "adm1_code"),
+  boundaries = shp
+)
+
+campaigns$diagnostics |>
+  dplyr::count(check, campaign_id)
+
+## ---------------------------------------------------------------------------##
 # Save -------------------------------------------------------------------------
 ## ---------------------------------------------------------------------------##
 
@@ -331,3 +374,5 @@ saveRDS(
   measles_cases,
   file.path(processed_dir, "nga_measles_cases_adm1_2024.rds")
 )
+
+saveRDS(campaigns, file.path(processed_dir, "nga_campaigns_adm1.rds"))

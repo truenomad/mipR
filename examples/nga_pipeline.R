@@ -105,14 +105,15 @@ mcv2 <- mipR::read_ihme_mcv_admin(
   country = "NGA"
 )
 
-# match IHME unit names to the boundaries; decisions are cached so each
-# name is confirmed once
+# match IHME unit names to the boundaries without prompting; names that
+# cannot be matched are left as they are, and saved decisions are reused
 mcv2 <- sntutils::prep_geonames(
   target_df = mcv2,
   lookup_df = sf::st_drop_geometry(shp),
   level0 = "adm0",
   level1 = "adm1",
-  cache_path = here::here("01_data/1c_ihme/processed/geoname_cache.rds")
+  cache_path = here::here("01_data/1c_ihme/processed/geoname_cache.rds"),
+  interactive = FALSE
 )
 
 # add the boundary codes, which come from the matched names
@@ -121,6 +122,20 @@ mcv2 <- dplyr::left_join(
   sf::st_drop_geometry(shp)[, c("adm0", "adm1", "adm1_code")],
   by = c("adm0", "adm1")
 )
+
+## ---------------------------------------------------------------------------##
+# Campaigns --------------------------------------------------------------------
+## ---------------------------------------------------------------------------##
+
+# campaign records, survey indicators and diagnostics, prepared by
+# examples/nga_campaign_data.R with mipR::prepare_campaigns()
+campaigns <- readRDS(
+  here::here("01_data/1d_campaigns/processed/nga_campaigns_adm1.rds")
+)
+
+# problems to resolve before the campaigns are applied to cohorts, such as
+# the 2017-2018 state dates, which have to be completed by hand
+campaigns$diagnostics
 
 ## ---------------------------------------------------------------------------##
 # Monthly birth cohorts --------------------------------------------------------

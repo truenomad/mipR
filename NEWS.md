@@ -73,3 +73,10 @@
   dates can be combined. `worldpop_reference_date()` gives the date for
   each WorldPop year: 1 July for the legacy years before 2015 and 1 January
   from 2015.
+* Added `prepare_campaigns()` to bring campaign calendars, post-campaign
+  survey results and coverage reported by the campaign into standard
+  campaign records (target ages in months, upper bound exclusive), a
+  separate table of survey evaluation indicators, and diagnostics for
+  missing dates and coverage, invalid ages, unmatched units, duplicates and
+  overlapping campaigns. Missing dates and coverage are flagged, never
+  inferred or imputed.
