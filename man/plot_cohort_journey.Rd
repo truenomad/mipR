@@ -79,7 +79,8 @@ routine doses and the campaigns that reached the cohort.
 Areas are ranked by the cohort's susceptible share in \code{at}. For each
 percentile, the area closest to that percentile of the shares is drawn,
 and the panel title gives its name, the percentile and its susceptible
-share. Panels run from the lowest to the highest susceptible share.
+share in the \code{at} month. Panels run from the lowest to the highest
+susceptible share.
 
 Routine doses are always marked. A campaign is marked when it reached at
 least \code{min_reach} of the cohort in that area. Campaigns within

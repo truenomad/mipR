@@ -565,7 +565,8 @@ plot_cohort_protection <- function(
 #' Areas are ranked by the cohort's susceptible share in `at`. For each
 #' percentile, the area closest to that percentile of the shares is drawn,
 #' and the panel title gives its name, the percentile and its susceptible
-#' share. Panels run from the lowest to the highest susceptible share.
+#' share in the `at` month. Panels run from the lowest to the highest
+#' susceptible share.
 #'
 #' Routine doses are always marked. A campaign is marked when it reached at
 #' least `min_reach` of the cohort in that area. Campaigns within
@@ -684,7 +685,8 @@ plot_cohort_journey <- function(
     dplyr::mutate(
       panel = paste0(
         .data[[label]], " \u00b7 ", .ordinal(round(100 * .data$percentile)),
-        " percentile (", round(100 * .data$susceptible_share), "%)"
+        " percentile (", round(100 * .data$susceptible_share), "% in ",
+        format(at_month, "%b %Y"), ")"
       ),
       panel = factor(.data$panel, unique(.data$panel))
     ) |>
