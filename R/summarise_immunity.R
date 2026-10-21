@@ -90,10 +90,10 @@ summarise_immunity <- function(
     dplyr::filter(!is.na(.data$age_band)) |>
     dplyr::summarise(
       dplyr::across(
-        dplyr::all_of(share_cols), \(x) sum(x * .data$population)
+        dplyr::all_of(share_cols), \(x) sum(x * population)
       ),
-      susceptible = sum(.data$susceptible),
-      population = sum(.data$population),
+      susceptible = sum(susceptible),
+      population = sum(population),
       .by = dplyr::all_of(c(geography, "month", "age_band"))
     ) |>
     dplyr::mutate(
@@ -275,7 +275,7 @@ check_immunity <- function(immunity, campaigns) {
     )
   complete <- with_population |>
     dplyr::summarise(
-      missing_after = any(is.na(.data$population)),
+      missing_after = any(is.na(population)),
       .by = dplyr::all_of(c(geography, "campaign_id"))
     )
   diagnostics <- dplyr::bind_rows(
@@ -303,18 +303,18 @@ check_immunity <- function(immunity, campaigns) {
     dplyr::semi_join(usable, by = c(geography, "campaign_id")) |>
     dplyr::mutate(weight = .data$population * .data$eligible_share) |>
     dplyr::summarise(
-      denominator = sum(.data$weight),
-      mcv_0_dose = sum(.data$dose_0_after * .data$weight) /
-        sum(.data$weight),
-      mcv_1_dose = sum(.data$dose_1_after * .data$weight) /
-        sum(.data$weight),
+      denominator = sum(weight),
+      mcv_0_dose = sum(dose_0_after * weight) /
+        sum(weight),
+      mcv_1_dose = sum(dose_1_after * weight) /
+        sum(weight),
       mcv_2plus_dose = sum(
-        (.data$dose_2_after + .data$dose_3_plus_after) * .data$weight
-      ) / sum(.data$weight),
+        (dose_2_after + dose_3_plus_after) * weight
+      ) / sum(weight),
       mcv_before_sia = 1 -
-        sum(.data$dose_0_before * .data$weight) / sum(.data$weight),
-      sia_first_dose = sum(.data$first_doses * .data$population) /
-        sum(.data$weight),
+        sum(dose_0_before * weight) / sum(weight),
+      sia_first_dose = sum(first_doses * population) /
+        sum(weight),
       .by = dplyr::all_of(c(geography, "campaign_id"))
     ) |>
     tidyr::pivot_longer(
@@ -345,9 +345,9 @@ check_immunity <- function(immunity, campaigns) {
   summary <- comparison |>
     dplyr::summarise(
       areas = dplyr::n(),
-      mean_difference = mean(.data$difference),
-      mean_absolute_difference = mean(abs(.data$difference)),
-      share_within_interval = mean(.data$within_interval, na.rm = TRUE),
+      mean_difference = mean(difference),
+      mean_absolute_difference = mean(abs(difference)),
+      share_within_interval = mean(within_interval, na.rm = TRUE),
       .by = c("campaign_id", "indicator")
     )
 

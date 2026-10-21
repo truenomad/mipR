@@ -252,6 +252,13 @@ ve_cdc <- function(
   invisible(TRUE)
 }
 
+# internal helper: default number of parallel workers, the CPU cores less 4
+#' @noRd
+.default_workers <- function() {
+  cores <- parallel::detectCores()
+  if (is.na(cores)) 1L else max(1L, cores - 4L)
+}
+
 # internal helper: a single positive whole number
 #' @noRd
 .check_count <- function(x, arg, lower = 1) {
@@ -333,19 +340,68 @@ ve_cdc <- function(
     doses = 0L,
     mcv1 = FALSE,
     protected = FALSE,
-    markers = rep(list(character()), length(cells$cell)),
+    markers = "",
     share = 1
   )
 }
 
 # internal helper: a text key for each set of campaign markers, so states
-# can be grouped on it
+# can be grouped on it. each identifier is prefixed with its length, so
+# identifiers containing the separator stay unambiguous
 #' @noRd
 .marker_key <- function(markers) {
   purrr::map_chr(markers, \(m) {
+    if (length(m) == 0) {
+      return("")
+    }
     sorted <- sort(m)
     paste(paste0(nchar(sorted), ":", sorted), collapse = "|")
   })
+}
+
+# internal helper: the campaign identifiers in a marker key
+#' @noRd
+.marker_ids <- function(key) {
+  ids <- character()
+  while (nchar(key) > 0) {
+    n <- as.integer(sub(":.*$", "", key))
+    start <- nchar(n) + 2L
+    ids <- c(ids, substr(key, start, start + n - 1L))
+    key <- substr(key, start + n + 1L, nchar(key))
+  }
+  ids
+}
+
+# internal helper: apply `fun` to each marker key and identifier. states
+# share few distinct keys, so each distinct pair is worked out only once
+#' @noRd
+.marker_apply <- function(key, id, fun, type = character()) {
+  pairs <- dplyr::tibble(key = key, id = id)
+  done <- dplyr::distinct(pairs) |>
+    dplyr::mutate(
+      out = purrr::map2_vec(
+        key, id, \(k, i) fun(.marker_ids(k), i), .ptype = type
+      )
+    )
+  dplyr::left_join(pairs, done, by = c("key", "id"))$out
+}
+
+# internal helper: whether each marker key holds the identifier
+#' @noRd
+.marker_has <- function(key, id) {
+  .marker_apply(key, id, \(m, i) i %in% m, type = logical())
+}
+
+# internal helper: marker keys with the identifier added
+#' @noRd
+.marker_add <- function(key, id) {
+  .marker_apply(key, id, \(m, i) .marker_key(list(union(m, i))))
+}
+
+# internal helper: marker keys with the identifier removed
+#' @noRd
+.marker_drop <- function(key, id) {
+  .marker_apply(key, id, \(m, i) .marker_key(list(setdiff(m, i))))
 }
 
 # internal helper: shares of each cohort by vaccination state
@@ -353,11 +409,11 @@ ve_cdc <- function(
 .summarise_state <- function(state) {
   state |>
     dplyr::summarise(
-      susceptible_share = sum(.data$share * !.data$protected),
-      dose_0 = sum(.data$share * (.data$doses == 0)),
-      dose_1 = sum(.data$share * (.data$doses == 1)),
-      dose_2 = sum(.data$share * (.data$doses == 2)),
-      dose_3_plus = sum(.data$share * (.data$doses >= 3)),
+      susceptible_share = sum(share * !protected),
+      dose_0 = sum(share * (doses == 0)),
+      dose_1 = sum(share * (doses == 1)),
+      dose_2 = sum(share * (doses == 2)),
+      dose_3_plus = sum(share * (doses >= 3)),
       .by = "cell"
     )
 }
@@ -411,9 +467,10 @@ ve_cdc <- function(
     dplyr::mutate(
       doses = pmin(.data$doses + 1L, max_doses),
       mcv1 = .data$mcv1 | .data$type == "mcv1",
-      markers = purrr::pmap(
-        list(.data$markers, .data$event_id, .data$set_marker),
-        \(m, id, set) if (set) union(m, id) else m
+      markers = dplyr::if_else(
+        .data$set_marker,
+        .marker_add(.data$markers, .data$event_id),
+        .data$markers
       )
     )
 }
@@ -432,9 +489,8 @@ ve_cdc <- function(
   joined <- state |>
     dplyr::inner_join(events, by = "cell") |>
     dplyr::mutate(
-      eligible = !.data$restrict | !purrr::map2_lgl(
-        .data$markers, .data$event_id, \(m, id) id %in% m
-      )
+      eligible = !.data$restrict |
+        !.marker_has(.data$markers, .data$event_id)
     )
   passive <- joined |>
     dplyr::filter(!.data$eligible) |>
@@ -445,15 +501,15 @@ ve_cdc <- function(
 
   fraction <- active |>
     dplyr::summarise(
-      tier_share = sum(.data$share),
+      tier_share = sum(share),
       .by = c("cell", "tier", "reach")
     ) |>
     dplyr::arrange(.data$cell, .data$tier) |>
     dplyr::mutate(
-      mass = .data$reach * sum(.data$tier_share),
-      filled = cumsum(.data$tier_share) - .data$tier_share,
-      fraction = (.data$mass - .data$filled) / .data$tier_share,
-      fraction = pmin(pmax(.data$fraction, 0), 1),
+      mass = reach * sum(tier_share),
+      filled = cumsum(tier_share) - tier_share,
+      fraction = (mass - filled) / tier_share,
+      fraction = pmin(pmax(fraction, 0), 1),
       .by = "cell"
     ) |>
     dplyr::select("cell", "tier", "fraction")
@@ -493,16 +549,15 @@ ve_cdc <- function(
   ) |>
     dplyr::left_join(clearing, by = "cell") |>
     dplyr::mutate(
-      markers = purrr::map2(
-        .data$markers, .data$ended,
-        \(m, id) if (is.na(id)) m else setdiff(m, id)
-      ),
-      marker_key = .marker_key(.data$markers)
+      markers = dplyr::if_else(
+        is.na(.data$ended),
+        .data$markers,
+        .marker_drop(.data$markers, dplyr::coalesce(.data$ended, ""))
+      )
     ) |>
     dplyr::summarise(
-      share = sum(.data$share),
-      markers = list(dplyr::first(.data$markers)),
-      .by = c("cell", "doses", "mcv1", "protected", "marker_key")
+      share = sum(share),
+      .by = c("cell", "doses", "mcv1", "protected", "markers")
     ) |>
     dplyr::filter(.data$share != 0) |>
     dplyr::select(dplyr::all_of(state_cols)) |>
@@ -562,7 +617,7 @@ ve_cdc <- function(
     dplyr::mutate(coupling = .optional_column(events, "coupling")) |>
     dplyr::filter(.data$reach > 0) |>
     dplyr::mutate(
-      coupling = dplyr::coalesce(.data$coupling, default_coupling)
+      coupling = dplyr::coalesce(coupling, default_coupling)
     ) |>
     dplyr::mutate(step = dplyr::row_number(), .by = "cell")
 
@@ -591,9 +646,16 @@ ve_cdc <- function(
     dplyr::select(events, dplyr::all_of(key_cols))
   )
 
-  steps <- purrr::map2(
-    states, c(0L, by_step$step),
-    \(state, j) dplyr::mutate(.summarise_state(state), step = j)
+  # after step 0, only the cohorts with an event at that step are kept
+  step_cells <- c(list(cells$cell), purrr::map(by_step$data, "cell"))
+  steps <- purrr::pmap(
+    list(states, c(0L, by_step$step), step_cells),
+    \(state, j, step_cell) {
+      state |>
+        dplyr::filter(.data$cell %in% step_cell) |>
+        .summarise_state() |>
+        dplyr::mutate(step = j)
+    }
   ) |>
     purrr::list_rbind() |>
     dplyr::inner_join(step_keys, by = c("cell", "step")) |>
@@ -601,9 +663,9 @@ ve_cdc <- function(
 
   contributions <- steps |>
     dplyr::mutate(
-      newly_protected = dplyr::lag(.data$susceptible_share) -
-        .data$susceptible_share,
-      first_doses = dplyr::lag(.data$dose_0) - .data$dose_0,
+      newly_protected = dplyr::lag(susceptible_share) -
+        susceptible_share,
+      first_doses = dplyr::lag(dose_0) - dose_0,
       .by = "cell"
     ) |>
     dplyr::filter(.data$step > 0) |>
@@ -754,7 +816,7 @@ ve_cdc <- function(
       dplyr::summarise(
         dplyr::across(
           dplyr::all_of(value_cols),
-          \(x) sum(x * .data$weight) / sum(.data$weight),
+          \(x) sum(x * weight) / sum(weight),
           .names = paste0("{.col}_", when)
         ),
         .by = "history_row"
@@ -768,7 +830,7 @@ ve_cdc <- function(
     )
   by_row <- targets |>
     dplyr::summarise(
-      eligible_share = sum(.data$weight),
+      eligible_share = sum(weight),
       .by = c("history_row", "cell", "event_id", "before", "after")
     ) |>
     dplyr::inner_join(.state_at(targets, "before"), by = "history_row") |>
@@ -778,15 +840,15 @@ ve_cdc <- function(
   # up by their eligible shares
   by_row |>
     dplyr::summarise(
-      before = dplyr::first(.data$before),
-      after = dplyr::first(.data$after),
+      before = dplyr::first(before),
+      after = dplyr::first(after),
       dplyr::across(
         dplyr::all_of(c(
           paste0(value_cols, "_before"), paste0(value_cols, "_after")
         )),
-        \(x) sum(x * .data$eligible_share) / sum(.data$eligible_share)
+        \(x) sum(x * eligible_share) / sum(eligible_share)
       ),
-      eligible_share = sum(.data$eligible_share),
+      eligible_share = sum(eligible_share),
       .by = c("cell", "event_id")
     ) |>
     dplyr::inner_join(
@@ -908,8 +970,8 @@ ve_cdc <- function(
   signatures <- subevents |>
     dplyr::summarise(
       signature = paste(
-        .data$event_key, .data$k, .data$n, .data$report_month,
-        .data$band, sep = ":", collapse = ";"
+        event_key, k, n, report_month,
+        band, sep = ":", collapse = ";"
       ),
       .by = c("pattern", "day")
     )
@@ -918,8 +980,8 @@ ve_cdc <- function(
     dplyr::mutate(signature = dplyr::coalesce(.data$signature, ""))
   groups <- grouped_days |>
     dplyr::summarise(
-      rep_day = min(.data$day),
-      weight = dplyr::n() / dplyr::first(.data$days_in_month),
+      rep_day = min(day),
+      weight = dplyr::n() / dplyr::first(days_in_month),
       .by = c("pattern", "signature")
     ) |>
     dplyr::arrange(.data$pattern, .data$rep_day) |>
@@ -962,8 +1024,8 @@ ve_cdc <- function(
       dplyr::select(units, "unit", "weight"), by = c(cell = "unit")
     ) |>
     dplyr::summarise(
-      newly_protected = sum(.data$newly_protected * .data$weight),
-      first_doses = sum(.data$first_doses * .data$weight),
+      newly_protected = sum(newly_protected * weight),
+      first_doses = sum(first_doses * weight),
       .by = "history_row"
     )
 
@@ -974,13 +1036,13 @@ ve_cdc <- function(
       first_doses = dplyr::coalesce(.data$first_doses, 0)
     ) |>
     dplyr::summarise(
-      month = min(.data$month),
-      date_from = min(.data$date_from),
-      date_to = max(.data$date_to),
-      eligible_share = sum(.data$eligible_share),
-      reached = sum(.data$coverage * .data$eligible_share),
-      newly_protected = sum(.data$newly_protected),
-      first_doses = sum(.data$first_doses),
+      month = min(month),
+      date_from = min(date_from),
+      date_to = max(date_to),
+      eligible_share = sum(eligible_share),
+      reached = sum(coverage * eligible_share),
+      newly_protected = sum(newly_protected),
+      first_doses = sum(first_doses),
       .by = c("cell", "event_id", "type")
     ) |>
     dplyr::arrange(.data$cell, .data$date_from, .data$type)
@@ -1020,7 +1082,7 @@ ve_cdc <- function(
   )
   joined |>
     dplyr::summarise(
-      dplyr::across(dplyr::all_of(value_cols), \(x) sum(x * .data$weight)),
+      dplyr::across(dplyr::all_of(value_cols), \(x) sum(x * weight)),
       .by = dplyr::all_of(keys)
     )
 }
@@ -1053,11 +1115,13 @@ ve_cdc <- function(
 #' The random number generator state is restored after the call, so the
 #' draws do not disturb other random work in the session.
 #'
-#' **Parallel runs.** When mirai daemons are set, for example with
-#' `mirai::daemons(6)`, batches of draws run in parallel on the daemons.
-#' Coverage is drawn before the batches are sent out and each draw's engine
-#' run is deterministic, so the result is the same with or without daemons
-#' and for any `batch_size`. The daemons load the installed mipR.
+#' **Parallel runs.** With `workers` above 1, batches of draws run in
+#' parallel on that many mirai daemons, which are started for the call and
+#' shut down afterwards. Batches are made small enough to give every worker
+#' at least one. Daemons already set with [mirai::daemons()] are
+#' used instead. Coverage is drawn before the batches are sent out and each
+#' draw's engine run is deterministic, so the result is the same for any
+#' `workers` and `batch_size`. The daemons load the installed mipR.
 #'
 #' @inheritParams estimate_immunity
 #' @param n_draws Number of draws. Default `100`.
@@ -1068,6 +1132,9 @@ ve_cdc <- function(
 #'   year, between -1 and 1. Default `0.5`.
 #' @param batch_size Number of draws run through the engine together.
 #'   Larger batches use more memory. Default `10`.
+#' @param workers Number of parallel workers. Default: the number of CPU
+#'   cores less 4, and at least 1. Above 1 needs the mirai package; without
+#'   it the draws run one batch at a time.
 #' @param ... Passed to [summarise_immunity()], for example `geography`,
 #'   `at` and `age_breaks`.
 #'
@@ -1095,6 +1162,7 @@ immunity_draws <- function(
   rho_years = 0.9,
   rho_doses = 0.5,
   batch_size = 10,
+  workers = .default_workers(),
   max_doses = 8L,
   ...
 ) {
@@ -1102,6 +1170,7 @@ immunity_draws <- function(
   .check_ve(ve)
   n_draws <- .check_count(n_draws, "n_draws")
   batch_size <- .check_count(batch_size, "batch_size")
+  workers <- .check_count(workers, "workers")
   max_doses <- .check_count(max_doses, "max_doses", lower = 3)
   .check_number(seed, "seed")
   .check_number(rho_years, "rho_years", lower = -1, upper = 1)
@@ -1150,8 +1219,29 @@ immunity_draws <- function(
     summary_args$geography <- c(summary_args$geography, "draw")
   }
 
+  parallel <- requireNamespace("mirai", quietly = TRUE) &&
+    mirai::daemons_set()
+  n_workers <- if (parallel) mirai::status()$connections else 1L
+  if (!parallel && workers > 1) {
+    if (requireNamespace("mirai", quietly = TRUE)) {
+      mirai::daemons(workers)
+      n_workers <- workers
+      on.exit(mirai::daemons(0), add = TRUE)
+      parallel <- TRUE
+    } else {
+      cli::cli_inform(
+        "Install {.pkg mirai} to run the draws in parallel."
+      )
+    }
+  }
+
+  # in parallel, batches are capped so that every worker gets one
+  if (parallel) {
+    batch_size <- min(batch_size, ceiling(n_draws / max(1L, n_workers)))
+  }
+
   # batches of draws, each run through the engine in one pass; batches run
-  # in parallel when mirai daemons are set
+  # in parallel on mirai daemons
   batches <- dplyr::tibble(draw = seq_len(n_draws), events = drawn) |>
     dplyr::mutate(batch = (.data$draw - 1L) %/% batch_size) |>
     tidyr::nest(.by = "batch") |>
@@ -1162,8 +1252,6 @@ immunity_draws <- function(
     maternal_months = maternal_months, max_doses = max_doses,
     summary_args = summary_args
   )
-  parallel <- requireNamespace("mirai", quietly = TRUE) &&
-    mirai::daemons_set()
   draws <- if (parallel) {
     mirai::mirai_map(batches, .draw_batch, .args = batch_args) |>
       mirai::collect_mirai(options = c(".stop", ".progress"))
@@ -1185,13 +1273,13 @@ immunity_draws <- function(
   )
   draws |>
     dplyr::summarise(
-      population = dplyr::first(.data$population),
-      susceptible_median = stats::median(.data$susceptible),
-      susceptible_lower = stats::quantile(.data$susceptible, 0.025),
-      susceptible_upper = stats::quantile(.data$susceptible, 0.975),
-      share_median = stats::median(.data$susceptible_share),
-      share_lower = stats::quantile(.data$susceptible_share, 0.025),
-      share_upper = stats::quantile(.data$susceptible_share, 0.975),
+      population = dplyr::first(population),
+      susceptible_median = stats::median(susceptible),
+      susceptible_lower = stats::quantile(susceptible, 0.025),
+      susceptible_upper = stats::quantile(susceptible, 0.975),
+      share_median = stats::median(susceptible_share),
+      share_lower = stats::quantile(susceptible_share, 0.025),
+      share_upper = stats::quantile(susceptible_share, 0.975),
       .by = dplyr::all_of(keys)
     )
 }
@@ -1272,9 +1360,9 @@ immunity_draws <- function(
       dplyr::across(dplyr::all_of(c(geography, "coverage_year")))
     ) |>
     dplyr::mutate(
-      gap = .data$coverage_year - dplyr::lag(.data$coverage_year),
-      shared = .ar1(stats::rnorm(dplyr::n()), rho_years, .data$gap),
-      own = .ar1(stats::rnorm(dplyr::n()), rho_years, .data$gap),
+      gap = coverage_year - dplyr::lag(coverage_year),
+      shared = .ar1(stats::rnorm(dplyr::n()), rho_years, gap),
+      own = .ar1(stats::rnorm(dplyr::n()), rho_years, gap),
       .by = dplyr::all_of(geography)
     ) |>
     tidyr::expand_grid(type = c("mcv1", "mcv2")) |>

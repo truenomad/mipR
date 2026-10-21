@@ -284,13 +284,15 @@ testthat::test_that("inputs are validated before they reach the engine", {
     estimate_immunity(history, kano_cohorts, max_doses = 2), "3 or more"
   )
   testthat::expect_error(
-    immunity_draws(history, kano_cohorts, n_draws = 0), "n_draws"
+    immunity_draws(history, kano_cohorts, n_draws = 0, workers = 1), "n_draws"
   )
   testthat::expect_error(
-    immunity_draws(history, kano_cohorts, rho_years = 2), "rho_years"
+    immunity_draws(history, kano_cohorts, rho_years = 2, workers = 1),
+    "rho_years"
   )
   testthat::expect_error(
-    immunity_draws(history, kano_cohorts, max_doses = 2), "3 or more"
+    immunity_draws(history, kano_cohorts, max_doses = 2, workers = 1),
+    "3 or more"
   )
   testthat::expect_error(ve_cdc(breaks = c(9, 0)), "increasing")
 })
@@ -314,7 +316,7 @@ testthat::test_that("no opportunities leave every child unvaccinated", {
   testthat::expect_identical(nrow(immunity$contributions), 0L)
 
   draws <- immunity_draws(
-    history, kano_cohorts, n_draws = 4, at = "2025-01"
+    history, kano_cohorts, n_draws = 4, at = "2025-01", workers = 1
   )
   testthat::expect_true(all(draws$share_median == 1))
   testthat::expect_true(all(draws$share_lower == 1))
@@ -340,17 +342,21 @@ testthat::test_that("draws do not depend on batching or disturb the RNG", {
     schedule = dplyr::tibble(dose = "mcv1", age_months = 9), geography = "adm1"
   )
   small <- immunity_draws(
-    history, kano_cohorts, n_draws = 7, batch_size = 3, at = "2025-01"
+    history, kano_cohorts, n_draws = 7, batch_size = 3, at = "2025-01",
+    workers = 1
   )
   large <- immunity_draws(
-    history, kano_cohorts, n_draws = 7, batch_size = 20, at = "2025-01"
+    history, kano_cohorts, n_draws = 7, batch_size = 20, at = "2025-01",
+    workers = 1
   )
   testthat::expect_identical(small, large)
 
   set.seed(99)
   before <- stats::runif(1)
   set.seed(99)
-  immunity_draws(history, kano_cohorts, n_draws = 2, at = "2025-01")
+  immunity_draws(
+    history, kano_cohorts, n_draws = 2, at = "2025-01", workers = 1
+  )
   testthat::expect_identical(stats::runif(1), before)
 })
 

@@ -25,6 +25,7 @@ Imports:
     grDevices,
     httr2 (>= 1.1.1),
     openssl,
+    parallel,
     purrr (>= 1.0.1),
     readxl,
     sf,

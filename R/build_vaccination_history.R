@@ -423,13 +423,13 @@ build_vaccination_history <- function(
     dplyr::arrange(dplyr::across(dplyr::all_of(c(keys, "day")))) |>
     dplyr::mutate(
       run = cumsum(
-        is.na(dplyr::lag(.data$day)) | .data$day != dplyr::lag(.data$day) + 1L
+        is.na(dplyr::lag(day)) | day != dplyr::lag(day) + 1L
       ),
       .by = dplyr::all_of(keys)
     ) |>
     dplyr::summarise(
-      day_from = min(.data$day),
-      day_to = max(.data$day),
+      day_from = min(day),
+      day_to = max(day),
       .by = dplyr::all_of(c(keys, "run"))
     ) |>
     dplyr::select(-"run")
@@ -688,12 +688,12 @@ build_vaccination_history <- function(
 
   campaigns <- campaigns |>
     dplyr::mutate(
-      usable = !is.na(.data$start_date) & !is.na(.data$end_date) &
-        !is.na(.data$coverage) & !is.na(.data$age_min_months) &
-        !is.na(.data$age_max_months)
+      usable = !is.na(start_date) & !is.na(end_date) &
+        !is.na(coverage) & !is.na(age_min_months) &
+        !is.na(age_max_months)
     )
   skipped <- campaigns |>
-    dplyr::filter(!.data$usable) |>
+    dplyr::filter(!usable) |>
     dplyr::summarise(n_records = dplyr::n(), .by = "campaign_id") |>
     dplyr::mutate(
       check = "campaign_skipped",

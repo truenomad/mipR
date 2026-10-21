@@ -15,6 +15,7 @@ immunity_draws(
   rho_years = 0.9,
   rho_doses = 0.5,
   batch_size = 10,
+  workers = .default_workers(),
   max_doses = 8L,
   ...
 )
@@ -46,6 +47,10 @@ year, between -1 and 1. Default \code{0.5}.}
 
 \item{batch_size}{Number of draws run through the engine together.
 Larger batches use more memory. Default \code{10}.}
+
+\item{workers}{Number of parallel workers. Default: the number of CPU
+cores less 4, and at least 1. Above 1 needs the mirai package; without
+it the draws run one batch at a time.}
 
 \item{max_doses}{Most doses tracked; further doses stay in the top group.
 Default \code{8}.}
@@ -84,11 +89,13 @@ and between MCV1 and MCV2 in the same year (\code{rho_doses}).
 The random number generator state is restored after the call, so the
 draws do not disturb other random work in the session.
 
-\strong{Parallel runs.} When mirai daemons are set, for example with
-\code{mirai::daemons(6)}, batches of draws run in parallel on the daemons.
-Coverage is drawn before the batches are sent out and each draw's engine
-run is deterministic, so the result is the same with or without daemons
-and for any \code{batch_size}. The daemons load the installed mipR.
+\strong{Parallel runs.} With \code{workers} above 1, batches of draws run in
+parallel on that many mirai daemons, which are started for the call and
+shut down afterwards. Batches are made small enough to give every worker
+at least one. Daemons already set with \code{\link[mirai:daemons]{mirai::daemons()}} are
+used instead. Coverage is drawn before the batches are sent out and each
+draw's engine run is deterministic, so the result is the same for any
+\code{workers} and \code{batch_size}. The daemons load the installed mipR.
 }
 \examples{
 \dontrun{

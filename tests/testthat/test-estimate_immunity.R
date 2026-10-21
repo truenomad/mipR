@@ -315,7 +315,7 @@ testthat::test_that("immunity_draws gives intervals around the estimate", {
     kano_cohorts, kano_coverage, schedule = kano_schedule, geography = "adm1"
   )
   draws <- immunity_draws(
-    history, kano_cohorts, n_draws = 20, seed = 3, at = "2025-01"
+    history, kano_cohorts, n_draws = 20, seed = 3, at = "2025-01", workers = 1
   )
   point <- summarise_immunity(
     estimate_immunity(history, kano_cohorts), at = "2025-01"
@@ -329,7 +329,7 @@ testthat::test_that("immunity_draws gives intervals around the estimate", {
   )
 
   again <- immunity_draws(
-    history, kano_cohorts, n_draws = 20, seed = 3, at = "2025-01"
+    history, kano_cohorts, n_draws = 20, seed = 3, at = "2025-01", workers = 1
   )
   testthat::expect_identical(draws, again)
 })
