@@ -263,6 +263,17 @@ testthat::test_that(".weighted_median finds the half-weight value", {
 
 testthat::test_that("layers of a stack take the years in the filename", {
   testthat::expect_identical(
+    .layer_years(
+      paste0("mcv1_coverage_mean_2000_2025_", 1:26),
+      "mcv1_coverage_mean_2000_2025.tif"
+    ),
+    2000:2025
+  )
+  testthat::expect_identical(
+    .layer_years(c("cov_2020", "layer.2"), "cov_2020_2021.tif"),
+    2020:2021
+  )
+  testthat::expect_identical(
     .layer_years(paste0("layer.", 1:26), "mcv1_coverage_mean_2000_2025.tif"),
     2000:2025
   )

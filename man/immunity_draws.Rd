@@ -15,6 +15,7 @@ immunity_draws(
   rho_years = 0.9,
   rho_doses = 0.5,
   batch_size = 10,
+  max_doses = 8L,
   ...
 )
 }
@@ -38,13 +39,16 @@ immunity_draws(
 protected by maternal antibodies. Default \code{6}.}
 
 \item{rho_years}{Correlation of routine coverage between consecutive
-years. Default \code{0.9}.}
+years, between -1 and 1. Default \code{0.9}.}
 
 \item{rho_doses}{Correlation between MCV1 and MCV2 coverage in the same
-year. Default \code{0.5}.}
+year, between -1 and 1. Default \code{0.5}.}
 
 \item{batch_size}{Number of draws run through the engine together.
 Larger batches use more memory. Default \code{10}.}
+
+\item{max_doses}{Most doses tracked; further doses stay in the top group.
+Default \code{8}.}
 
 \item{...}{Passed to \code{\link[=summarise_immunity]{summarise_immunity()}}, for example \code{geography},
 \code{at} and \code{age_breaks}.}
@@ -60,20 +64,31 @@ Repeats \code{\link[=estimate_immunity]{estimate_immunity()}} with coverage draw
 intervals, and summarises the susceptible population across draws.
 }
 \details{
-Coverage is drawn on the logit scale, with a normal distribution whose
-95\% interval matches \code{coverage_lower} to \code{coverage_upper} (IHME bounds
-for routine coverage, survey intervals for campaigns). Coverage without
-an interval is kept fixed.
+Coverage is drawn on the logit scale from a normal distribution centred
+on the logit of the coverage, with a standard deviation set so that the
+width of its 95\% interval matches the width of \code{coverage_lower} to
+\code{coverage_upper} on the logit scale (IHME bounds for routine coverage,
+survey intervals for campaigns). The draws are symmetric on the logit
+scale, so an interval that is not symmetric around the coverage on that
+scale is matched in width only, not bound by bound. Coverage without an
+interval is kept fixed, and the draws never move it.
 
-Routine coverage draws are correlated across years within a geography
-and dose (first-order autocorrelation \code{rho_years}) and between MCV1 and
-MCV2 in the same year (\code{rho_doses}). Each campaign record is drawn on its
-own.
+One value is drawn per coverage record (\code{record} in the history), so a
+campaign record given for a whole country or region is drawn once and
+applied to every cohort inside it. Routine coverage draws are correlated
+across coverage years within a geography and dose with first-order
+autocorrelation \code{rho_years} per year elapsed (so years two apart have
+correlation \code{rho_years^2}, whether or not the year between has data),
+and between MCV1 and MCV2 in the same year (\code{rho_doses}).
+
+The random number generator state is restored after the call, so the
+draws do not disturb other random work in the session.
 
 \strong{Parallel runs.} When mirai daemons are set, for example with
 \code{mirai::daemons(6)}, batches of draws run in parallel on the daemons.
-Coverage is drawn before the batches are sent out, so the result is the
-same with or without daemons. The daemons load the installed mipR.
+Coverage is drawn before the batches are sent out and each draw's engine
+run is deterministic, so the result is the same with or without daemons
+and for any \code{batch_size}. The daemons load the installed mipR.
 }
 \examples{
 \dontrun{

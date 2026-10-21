@@ -969,6 +969,10 @@ map_immunity <- function(
       "{.arg summary} and {.arg boundaries} share no geography columns."
     )
   }
+  if (any(!is.finite(summary$susceptible_share)) ||
+      any(summary$susceptible_share < 0 | summary$susceptible_share > 1)) {
+    cli::cli_abort("Susceptible shares must be finite proportions.")
+  }
 
   data <- boundaries |>
     dplyr::select(dplyr::all_of(join_cols)) |>
@@ -984,7 +988,15 @@ map_immunity <- function(
         .data$age_band
       }
     )
-  scale_top <- max(pretty(c(0, max(data$susceptible_pct, na.rm = TRUE))))
+  if (nrow(data) == 0) {
+    cli::cli_abort("No summary geographies match the boundaries.")
+  }
+  scale_top <- max(1, pretty(c(0, max(data$susceptible_pct))))
+  if (!is.null(limits) &&
+      (!is.numeric(limits) || length(limits) != 2 ||
+       any(!is.finite(limits)) || any(diff(limits) <= 0))) {
+    cli::cli_abort("{.arg limits} must be two increasing finite numbers.")
+  }
 
   if (type == "gradient") {
     plot <- sntutils::facetted_map_gradient(
@@ -1010,6 +1022,13 @@ map_immunity <- function(
 
   if (is.null(breaks)) {
     breaks <- .default_breaks(scale_top)
+  }
+  if (!is.numeric(breaks) || length(breaks) == 0 ||
+      any(!is.finite(breaks)) || any(diff(breaks) <= 0) ||
+      min(breaks) != 0 || max(breaks) > 100) {
+    cli::cli_abort(
+      "{.arg breaks} must increase from zero and stay within 0 to 100."
+    )
   }
   bands <- .percent_bands(breaks, get_palette(palette))
   data <- data |>
@@ -1089,7 +1108,7 @@ map_immunity <- function(
 # 10-20), then steps of 20 up to the top of the scale
 #' @noRd
 .default_breaks <- function(scale_top) {
-  c(0, 5, 10, seq(20, scale_top, by = 20)) |>
+  c(0, 5, 10, seq(20, max(20, scale_top), by = 20)) |>
     unique() |>
-    purrr::keep(\(b) b < scale_top)
+    purrr::keep(\(b) b == 0 || b < scale_top)
 }

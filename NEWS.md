@@ -1,5 +1,36 @@
 # mipR 0.0.1
 
+* Vaccination histories retain birth-day eligibility and dose dates.
+  Monthly immunity uses only doses received by the 15th, with campaign
+  doses distributed across eligible dates and effectiveness evaluated at
+  the age on each date. Equivalent schedule partitions give the same
+  result; missing routine-coverage years use the nearest available year.
+* Empty vaccination histories remain fully susceptible. Added validation
+  for coverage bounds, schedule ages, effectiveness and draw settings.
+  Coverage draws preserve the caller's random-number state, share campaign
+  draws across affected cohorts and use elapsed years for correlation.
+* Survey comparisons use campaign-specific windows and eligible children.
+  First doses are attributed to the campaign's own transitions. Missing
+  comparison windows are diagnosed, and survey denominators are explicit.
+* Fixed cohort extension with zero birth-seasonality weights, retaining
+  exact zero births in those months. Sparse mortality and birth-rate
+  years use the nearest available year, with earlier years breaking ties.
+* Constrained reconstruction now rejects zero fitting tolerance, duplicate
+  anchors and invalid demographic inputs instead of returning misleading
+  populations. The fitting and infant-survival assumptions are explicit.
+* Fixed default map bins for susceptibility below 20%, including all-zero
+  maps, and added checks for invalid shares, breaks and unmatched areas.
+* Population weights are summed directly onto a target grid when its
+  coordinate reference system differs, avoiding bilinear interpolation
+  of population counts.
+* Annual raster stacks with default band names use the filename's year
+  range, rather than assigning its final year to every band.
+* Boundary downloads now respect `quiet = TRUE`; WHO messages correctly
+  describe cached GeoPackages. Live OCHA tests accept French country names.
+* Declared minimum versions of dplyr, purrr, tidyr and httr2. Updated the
+  package description, added a self-contained example and optional-package
+  guidance, and rewrote report parsing with tidyverse data frames.
+
 * Set up the package infrastructure: DESCRIPTION, MIT licence, roxygen2
   documentation, testthat (third edition), GitHub Actions R CMD check,
   README and package logo.

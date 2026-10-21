@@ -129,7 +129,8 @@ testthat::test_that("get_boundaries downloads OCHA COD-AB boundaries", {
   result <- get_boundaries("TCD", adm_level = 2, source = "ocha", cache = FALSE)
 
   testthat::expect_s3_class(result, "sf")
-  testthat::expect_true(all(result$adm0 == "Chad"))
+  # OCHA may publish either English or French country labels.
+  testthat::expect_true(all(result$adm0 %in% c("Chad", "Tchad")))
   testthat::expect_false(anyNA(result$adm2_code))
   testthat::expect_identical(unique(result$source), "ocha")
 })

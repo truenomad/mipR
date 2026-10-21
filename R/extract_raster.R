@@ -304,9 +304,10 @@ extract_raster <- function(
 
   weights <- pop
   if (!identical(terra::crs(weights), terra::crs(layer))) {
-    weights <- terra::project(weights, terra::crs(layer))
+    weights <- terra::project(weights, layer, method = "sum")
+  } else {
+    weights <- terra::resample(weights, layer, method = "sum")
   }
-  weights <- terra::resample(weights, layer, method = "sum")
 
   wanted <- intersect(fun, c("weighted_mean", "weighted_median"))
   weighted <- purrr::map(purrr::set_names(wanted), \(stat) {
@@ -507,7 +508,7 @@ extract_raster <- function(
     return(NA_integer_)
   }
   from_names <- purrr::map_int(unname(layer_names), .last_plausible_year)
-  if (!all(is.na(from_names))) {
+  if (!anyNA(from_names) && dplyr::n_distinct(from_names) == n) {
     return(from_names)
   }
   in_file <- .plausible_years(tools::file_path_sans_ext(file_name))

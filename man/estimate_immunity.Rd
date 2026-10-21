@@ -41,6 +41,15 @@ and \code{maternal_protection}}
 \item{contributions}{One row per cohort and opportunity: \code{event_id},
 \code{type}, \code{month}, \code{reached} and \code{newly_protected} (shares of the
 cohort)}
+\item{opportunities}{As \code{contributions}, with \code{date_from},
+\code{date_to}, \code{eligible_share} and \code{first_doses}, the share of the
+cohort whose first ever dose came from this opportunity}
+\item{campaign_targets}{One row per cohort and campaign: the share of
+the cohort the campaign can reach (\code{eligible_share}), the dose
+shares of those children on the 15th of the month \code{before} the
+campaign and of the month \code{after} it (\code{dose_0_before},
+\code{dose_0_after} and so on) and \code{first_doses}, for
+\code{\link[=check_immunity]{check_immunity()}}}
 \item{metadata}{The settings used}
 }
 }
@@ -52,11 +61,35 @@ month. Follows the CDC immunity profile method (Li, Goodson and Perry
 2024, Figure 1).
 }
 \details{
-\strong{States.} Each cohort is split into shares by number of doses received
+\strong{Birth days.} Children born on different days of a month receive
+their doses on different dates. Each cohort is therefore followed by day
+of birth: a child born on the 20th is due a 9-month dose on the 20th of
+the month nine months later, and is in a campaign's target ages on the
+campaign days that fall within that age range for that birth day. Birth
+days with the same sequence of dated opportunities (the same
+opportunities, in the same order, in the same reporting months and
+effectiveness bands) are run together and weighted by their share of
+the cohort, so a cohort usually needs a handful of runs, never more than
+one per day of the month.
+
+\strong{States.} Each run is split into shares by number of doses received
 (0 to \code{max_doses}), whether MCV1 was received, and whether the child is
-protected. An opportunity reaches \verb{coverage x eligible_share} of the
-cohort. Reached children who are not yet protected become protected with
-the vaccine effectiveness for the dose type and age at the dose.
+protected. Reached children who are not yet protected become protected
+with the vaccine effectiveness for the dose type and the child's exact
+age on the date of the dose, so the 9 and 12 month bands of \code{\link[=ve_cdc]{ve_cdc()}}
+apply to the children who are actually that age.
+
+\strong{Routine doses} happen on the date the birth day reaches the schedule
+age and reach \code{coverage} of the run.
+
+\strong{Campaigns} are spread over the campaign days on which the birth day
+is in the target ages. Each of those days reaches \code{coverage / n} of the
+run, where \code{n} is the number of such days, among children not yet
+reached by this campaign, so no child is vaccinated twice in one
+campaign and the campaign reaches exactly \code{coverage} of the run by its
+last eligible day. A campaign spanning several months therefore evolves
+month by month, and a routine dose falling within the campaign is applied
+on its own date between the campaign days.
 
 \strong{Who a dose reaches} (\code{coupling}):
 \itemize{
@@ -67,18 +100,25 @@ before children with none, as in the CDC method.
 }
 
 MCV2 always reaches MCV1 recipients first. A \code{coupling} column in the
-history overrides the default for an opportunity.
+history overrides the default for an opportunity. With no opportunity
+between a campaign's first and last day, the campaign's effect equals the
+CDC one-step formula for its coverage.
 
-\strong{Monthly values} refer to the 15th of each month. For an opportunity in
-that month, the value mixes the states before and after it by the share
-of the cohort's opportunity that has happened by the 15th
-(\code{timing_share}).
+\strong{Order.} Opportunities are applied in date order. On the same date,
+routine MCV1 comes before MCV2, both before campaigns, and campaigns in
+order of \code{event_id}. Monthly values are the state on the 15th of each
+month: every opportunity dated on or before the 15th has been applied in
+full and nothing later has, so every reported share lies between 0 and 1
+and the shares add up to 1.
 
 \strong{Maternal antibodies.} Infants younger than \code{maternal_months} are
 marked in \code{maternal_protection} and left out of \code{\link[=summarise_immunity]{summarise_immunity()}} by
 default, rather than modelled.
 
 Vaccination is the only source of immunity: infection is not modelled.
+Each state carries the set of campaigns that have already reached it, so
+two campaigns whose days overlap each reach a child at most once, and a
+campaign's marker is dropped on its last eligible day.
 }
 \examples{
 pop <- data.frame(

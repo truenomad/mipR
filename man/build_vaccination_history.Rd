@@ -24,19 +24,24 @@ build_vaccination_history(
 data frame. Optional.}
 
 \item{schedule}{Data frame with \code{dose} (\code{"mcv1"} or \code{"mcv2"}),
-\code{age_months}, and optionally \code{start_date} and \code{end_date}, the period in
-which the schedule applied (open ended when missing).}
+\code{age_months} (whole months), and optionally \code{start_date} and
+\code{end_date}, the period in which the schedule applied (open ended when
+missing).}
 
 \item{geography}{Columns that identify the geography of the cohorts.}
 }
 \value{
 A list:
 \describe{
-\item{history}{One row per cohort and opportunity: \code{cell}, the
-\code{geography} columns, \code{birth_month}, \code{event_id}, \code{type} (\code{"mcv1"},
-\code{"mcv2"} or \code{"sia"}), \code{month}, \code{eligible_share}, \code{timing_share},
-\code{age_at_dose}, \code{coverage}, \code{coverage_lower}, \code{coverage_upper} and
-\code{coverage_source}}
+\item{history}{One row per cohort, opportunity and run of eligible
+birth days: \code{cell}, the \code{geography} columns, \code{birth_month},
+\code{event_id}, \code{type} (\code{"mcv1"}, \code{"mcv2"} or \code{"sia"}), \code{record},
+\code{day_from}, \code{day_to}, \code{date_from}, \code{date_to}, \code{month},
+\code{eligible_share}, \code{timing_share}, \code{age_at_dose}, \code{age_months}
+(routine), \code{start_date}, \code{end_date}, \code{age_min_months} and
+\code{age_max_months} (campaigns), \code{coverage}, \code{coverage_lower},
+\code{coverage_upper}, \code{coverage_year} and \code{coverage_source}. Typed and
+empty when there are no opportunities}
 \item{cells}{One row per cohort: \code{cell}, the \code{geography} columns and
 \code{birth_month}}
 \item{diagnostics}{One row per problem: \code{check}, \code{detail} and the
@@ -46,36 +51,61 @@ records concerned}
 }
 \description{
 Lists every routine and campaign vaccination opportunity that applies to
-each monthly birth cohort, with the share of the cohort that is eligible,
-the coverage to apply and the age at the dose. The result is the input to
+each monthly birth cohort, with the birth days of the cohort that are
+eligible, the dates over which the opportunity happens, the coverage to
+apply and the age at the dose. The result is the input to
 \code{\link[=estimate_immunity]{estimate_immunity()}}.
 }
 \details{
 \strong{Cohorts.} Each cohort is a geography and birth month from
 \code{\link[=reconstruct_birth_cohorts]{reconstruct_birth_cohorts()}}. Births are spread evenly over the days of
-the birth month, so eligibility is worked out for each day of birth.
+the birth month, so eligibility is worked out for each day of birth. An
+opportunity row covers a run of consecutive eligible birth days,
+\code{day_from} to \code{day_to}; \code{eligible_share} is the share of the cohort born
+on those days.
 
-\strong{Routine doses.} Each row of \code{schedule} gives a dose, the age in months
-at which it is due, and the period in which the schedule applied. A child
-is offered the dose on the date they reach that age, if the date falls in
-the schedule period; \code{eligible_share} is the share of the cohort for whom
-it does. Coverage is the coverage of the calendar year of the dose. When
-that year is outside the coverage data, the nearest year is used and the
-substitution is listed in \code{diagnostics}.
+\strong{Routine doses.} Each row of \code{schedule} gives a dose, the age in whole
+months at which it is due, and the period in which the schedule applied.
+A child is offered the dose on the date they reach that age, if the date
+falls in any period of the schedule for that dose and age. Periods for
+the same dose and age are merged, so a schedule split into consecutive
+periods gives the same history as one open-ended period. Periods for the
+same dose with different ages must not overlap. Coverage is the coverage
+of the calendar year of the dose. When that year is not in the coverage
+data, the nearest available year is used (the earlier year on ties); the
+year used is kept in \code{coverage_year} and every substitution is listed in
+\code{diagnostics}. A geography and dose with no coverage at all is listed
+there too, and its doses are not applied.
 
-\strong{Campaigns.} Each record from \code{\link[=prepare_campaigns]{prepare_campaigns()}} reaches the share
-of each cohort whose age is in the target range at some time during the
-campaign, from \code{\link[=cohort_eligibility]{cohort_eligibility()}}. Records without dates, coverage or
-target ages are skipped and listed in \code{diagnostics}. Campaign records are
-joined to cohorts on the \code{geography} columns they share, so a national or
-admin 1 campaign applies to every cohort inside it.
+\strong{Campaigns.} Each record from \code{\link[=prepare_campaigns]{prepare_campaigns()}} reaches the children
+whose age is in the target range at some time during the campaign, as in
+\code{\link[=cohort_eligibility]{cohort_eligibility()}}. Records without dates, coverage or target ages
+are skipped and listed in \code{diagnostics}. Records with coverage outside 0
+to 1, an end before the start or an invalid age range stop the function
+with the campaign named, so they are never applied by mistake. Campaign
+records are joined to cohorts on the \code{geography} columns they share, so a
+national or admin 1 campaign applies to every cohort inside it.
 
-\strong{Timing.} \code{month} is the calendar month of the opportunity: the month
-the cohort reaches the schedule age, or the month of the campaign
-midpoint. \code{timing_share} is the share of the cohort's opportunity that
-has happened by the 15th of that month, the date at which monthly results
-are reported. \code{age_at_dose} is the age in months of the middle of the
-cohort at the dose, used for vaccine effectiveness.
+\strong{Coverage intervals.} \code{coverage_lower} and \code{coverage_upper} are
+optional. When given, both bounds must be finite proportions with
+\verb{coverage_lower <= coverage <= coverage_upper}; a row with one bound
+only is an error.
+
+\strong{Timing.} \code{date_from} and \code{date_to} are the first and last dates on
+which children born on \code{day_from} to \code{day_to} receive the dose: the dates
+they reach the schedule age, or the campaign days on which they are in
+the target ages. Doses are taken as spread evenly over those dates.
+\code{month} is the calendar month of the midpoint of those dates and
+\code{timing_share} is the share of the dates up to the 15th of that month,
+the date at which monthly results are reported. \code{age_at_dose} is the age
+in months at the dose of the child born in the middle of the eligible
+days, at the middle of that child's own dose dates, so it is always
+within the target ages. \code{\link[=estimate_immunity]{estimate_immunity()}} refines the ages and the
+timing further for each run of birth days.
+
+\code{record} identifies the coverage record behind each opportunity (a
+geography, dose and coverage year, or a campaign record), so that
+\code{\link[=immunity_draws]{immunity_draws()}} draws one coverage value per record.
 }
 \examples{
 pop <- data.frame(

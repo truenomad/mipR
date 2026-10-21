@@ -197,7 +197,9 @@ mcv2 <- sntutils::prep_geonames(
 # add the boundary codes, which come from the matched names
 mcv2 <- dplyr::left_join(
   mcv2,
-  sf::st_drop_geometry(shp)[, c("adm0", "adm1", "adm1_code")],
+  shp |>
+    sf::st_drop_geometry() |>
+    dplyr::select("adm0", "adm1", "adm1_code"),
   by = c("adm0", "adm1")
 )
 
@@ -235,7 +237,8 @@ cohorts <- mipR::reconstruct_birth_cohorts(
 cohorts$cohorts
 
 # anchors outside the 5% tolerance, for review
-cohorts$anchor_check[!cohorts$anchor_check$within_tolerance, ]
+cohorts$anchor_check |>
+  dplyr::filter(!.data$within_tolerance)
 
 # change in each cohort between anchors that mortality does not explain;
 # the switch from legacy to R2025A data shows between July 2014 and

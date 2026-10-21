@@ -9,11 +9,35 @@
 #' 2024, Figure 1).
 #'
 #' @details
-#' **States.** Each cohort is split into shares by number of doses received
+#' **Birth days.** Children born on different days of a month receive
+#' their doses on different dates. Each cohort is therefore followed by day
+#' of birth: a child born on the 20th is due a 9-month dose on the 20th of
+#' the month nine months later, and is in a campaign's target ages on the
+#' campaign days that fall within that age range for that birth day. Birth
+#' days with the same sequence of dated opportunities (the same
+#' opportunities, in the same order, in the same reporting months and
+#' effectiveness bands) are run together and weighted by their share of
+#' the cohort, so a cohort usually needs a handful of runs, never more than
+#' one per day of the month.
+#'
+#' **States.** Each run is split into shares by number of doses received
 #' (0 to `max_doses`), whether MCV1 was received, and whether the child is
-#' protected. An opportunity reaches `coverage x eligible_share` of the
-#' cohort. Reached children who are not yet protected become protected with
-#' the vaccine effectiveness for the dose type and age at the dose.
+#' protected. Reached children who are not yet protected become protected
+#' with the vaccine effectiveness for the dose type and the child's exact
+#' age on the date of the dose, so the 9 and 12 month bands of [ve_cdc()]
+#' apply to the children who are actually that age.
+#'
+#' **Routine doses** happen on the date the birth day reaches the schedule
+#' age and reach `coverage` of the run.
+#'
+#' **Campaigns** are spread over the campaign days on which the birth day
+#' is in the target ages. Each of those days reaches `coverage / n` of the
+#' run, where `n` is the number of such days, among children not yet
+#' reached by this campaign, so no child is vaccinated twice in one
+#' campaign and the campaign reaches exactly `coverage` of the run by its
+#' last eligible day. A campaign spanning several months therefore evolves
+#' month by month, and a routine dose falling within the campaign is applied
+#' on its own date between the campaign days.
 #'
 #' **Who a dose reaches** (`coupling`):
 #' - `"dependent"` (default): children who already had a dose are reached
@@ -22,18 +46,25 @@
 #' - `"complementary"`: children with fewer doses are reached first.
 #'
 #' MCV2 always reaches MCV1 recipients first. A `coupling` column in the
-#' history overrides the default for an opportunity.
+#' history overrides the default for an opportunity. With no opportunity
+#' between a campaign's first and last day, the campaign's effect equals the
+#' CDC one-step formula for its coverage.
 #'
-#' **Monthly values** refer to the 15th of each month. For an opportunity in
-#' that month, the value mixes the states before and after it by the share
-#' of the cohort's opportunity that has happened by the 15th
-#' (`timing_share`).
+#' **Order.** Opportunities are applied in date order. On the same date,
+#' routine MCV1 comes before MCV2, both before campaigns, and campaigns in
+#' order of `event_id`. Monthly values are the state on the 15th of each
+#' month: every opportunity dated on or before the 15th has been applied in
+#' full and nothing later has, so every reported share lies between 0 and 1
+#' and the shares add up to 1.
 #'
 #' **Maternal antibodies.** Infants younger than `maternal_months` are
 #' marked in `maternal_protection` and left out of [summarise_immunity()] by
 #' default, rather than modelled.
 #'
 #' Vaccination is the only source of immunity: infection is not modelled.
+#' Each state carries the set of campaigns that have already reached it, so
+#' two campaigns whose days overlap each reach a child at most once, and a
+#' campaign's marker is dropped on its last eligible day.
 #'
 #' @param history The output of [build_vaccination_history()].
 #' @param cohorts The output of [reconstruct_birth_cohorts()], or its
@@ -56,6 +87,15 @@
 #'     \item{contributions}{One row per cohort and opportunity: `event_id`,
 #'       `type`, `month`, `reached` and `newly_protected` (shares of the
 #'       cohort)}
+#'     \item{opportunities}{As `contributions`, with `date_from`,
+#'       `date_to`, `eligible_share` and `first_doses`, the share of the
+#'       cohort whose first ever dose came from this opportunity}
+#'     \item{campaign_targets}{One row per cohort and campaign: the share of
+#'       the cohort the campaign can reach (`eligible_share`), the dose
+#'       shares of those children on the 15th of the month `before` the
+#'       campaign and of the month `after` it (`dose_0_before`,
+#'       `dose_0_after` and so on) and `first_doses`, for
+#'       [check_immunity()]}
 #'     \item{metadata}{The settings used}
 #'   }
 #'
@@ -86,31 +126,49 @@ estimate_immunity <- function(
   max_doses = 8L
 ) {
   coupling <- match.arg(coupling)
+  .check_ve(ve)
+  max_doses <- .check_count(max_doses, "max_doses", lower = 3)
+  .check_number(maternal_months, "maternal_months", lower = 0)
   .check_history(history)
   cells <- history$cells
   geography <- setdiff(names(cells), c("cell", "birth_month"))
   panel <- .cohort_panel_input(cohorts, geography)
 
-  run <- .run_engine(
-    cells, history$history, coupling, ve, max_doses
-  )
+  run <- .run_cohorts(cells, history$history, coupling, ve, max_doses)
 
-  immunity <- .monthly_values(panel, cells, run$steps, geography) |>
+  immunity <- .monthly_values(
+    panel, cells, run$units, run$unit_values, geography
+  ) |>
     dplyr::mutate(
       susceptible = .data$susceptible_share * .data$population,
       maternal_protection = .data$age_months < maternal_months
     )
 
-  contributions <- run$contributions |>
+  opportunities <- run$opportunities |>
     dplyr::left_join(cells, by = "cell") |>
     dplyr::select(
       dplyr::all_of(geography), "birth_month", "event_id", "type", "month",
-      "reached", "newly_protected"
+      "date_from", "date_to", "eligible_share", "reached", "newly_protected",
+      "first_doses"
+    )
+  contributions <- dplyr::select(
+    opportunities,
+    dplyr::all_of(geography), "birth_month", "event_id", "type", "month",
+    "reached", "newly_protected"
+  )
+  campaign_targets <- run$campaign_targets |>
+    dplyr::left_join(cells, by = "cell") |>
+    dplyr::select(
+      dplyr::all_of(geography), "birth_month", "event_id", "eligible_share",
+      "before", "after", dplyr::ends_with("_before"),
+      dplyr::ends_with("_after"), "first_doses"
     )
 
   list(
     immunity = immunity,
     contributions = contributions,
+    opportunities = opportunities,
+    campaign_targets = campaign_targets,
     metadata = list(
       method = "CDC immunity profile (Li, Goodson and Perry 2024, Figure 1)",
       coupling = coupling,
@@ -118,6 +176,13 @@ estimate_immunity <- function(
       maternal_months = maternal_months,
       max_doses = max_doses,
       reporting_date = "15th of each month",
+      timing_rule = paste(
+        "exact dates by day of birth; routine doses on the date the",
+        "schedule age is reached; campaigns spread evenly over each birth",
+        "day's eligible campaign days, reaching each child at most once per",
+        "campaign; same-date order mcv1, mcv2, campaigns by event_id"
+      ),
+      effectiveness_rule = "age on the date of the dose",
       immunity_sources = "vaccination only"
     )
   )
@@ -130,8 +195,9 @@ estimate_immunity <- function(
 #' not yet protected, who become protected.
 #'
 #' @param mcv1,mcv2,sia Effectiveness by age band for each dose type, with
-#'   age bands set by `breaks`.
-#' @param breaks Lower bounds of the age bands in months.
+#'   age bands set by `breaks`. A single value applies to every band.
+#' @param breaks Lower bounds of the age bands in months, strictly
+#'   increasing. Ages below the first break use the first band.
 #'
 #' @return A list with `breaks` and the effectiveness for `mcv1`, `mcv2`
 #'   and `sia`, for [estimate_immunity()].
@@ -148,14 +214,66 @@ ve_cdc <- function(
   sia = c(0.58, 0.84, 0.95),
   breaks = c(0, 9, 12)
 ) {
-  values <- list(mcv1 = mcv1, mcv2 = mcv2, sia = sia)
   n <- length(breaks)
-  values <- purrr::map(values, \(v) rep_len(v, n))
+  values <- list(mcv1 = mcv1, mcv2 = mcv2, sia = sia) |>
+    purrr::map(\(v) if (length(v) == 1) rep_len(v, n) else v)
+  ve <- c(list(breaks = breaks), values)
+  .check_ve(ve)
+  ve
+}
+
+# internal helper: a vaccine effectiveness list as made by ve_cdc()
+#' @noRd
+.check_ve <- function(ve) {
+  parts <- c("breaks", "mcv1", "mcv2", "sia")
+  if (!is.list(ve) || !all(parts %in% names(ve))) {
+    cli::cli_abort("{.arg ve} must be a list from {.fn ve_cdc}.")
+  }
+  breaks <- ve$breaks
+  if (!is.numeric(breaks) || length(breaks) == 0 || any(!is.finite(breaks)) ||
+        is.unsorted(breaks, strictly = TRUE)) {
+    cli::cli_abort(
+      "{.arg ve} breaks must be finite, strictly increasing ages in months."
+    )
+  }
+  values <- purrr::map(c("mcv1", "mcv2", "sia"), \(type) ve[[type]])
+  right_length <- purrr::every(
+    values, \(v) is.numeric(v) && length(v) == length(breaks)
+  )
+  if (!right_length) {
+    cli::cli_abort(
+      "Vaccine effectiveness needs one value per age band in {.arg ve}."
+    )
+  }
   all_values <- purrr::list_c(values)
   if (any(!is.finite(all_values)) || any(all_values < 0 | all_values > 1)) {
     cli::cli_abort("Vaccine effectiveness must be between 0 and 1.")
   }
-  c(list(breaks = breaks), values)
+  invisible(TRUE)
+}
+
+# internal helper: a single positive whole number
+#' @noRd
+.check_count <- function(x, arg, lower = 1) {
+  if (!is.numeric(x) || length(x) != 1 || !is.finite(x) || x < lower ||
+        x %% 1 != 0) {
+    cli::cli_abort(
+      "{.arg {arg}} must be a single whole number, {lower} or more."
+    )
+  }
+  as.integer(x)
+}
+
+# internal helper: a single finite number within bounds
+#' @noRd
+.check_number <- function(x, arg, lower = -Inf, upper = Inf) {
+  if (!is.numeric(x) || length(x) != 1 || !is.finite(x) || x < lower ||
+        x > upper) {
+    cli::cli_abort(
+      "{.arg {arg}} must be a single number between {lower} and {upper}."
+    )
+  }
+  invisible(x)
 }
 
 #' @noRd
@@ -166,13 +284,39 @@ ve_cdc <- function(
     )
   }
   events <- history$history
-  if (!is.null(events) && nrow(events) > 0) {
+  needed <- c(
+    "cell", "birth_month", "event_id", "type", "record", "day_from",
+    "day_to", "date_from", "date_to", "month", "eligible_share",
+    "age_at_dose", "age_months", "start_date", "end_date", "age_min_months",
+    "age_max_months", "coverage", "coverage_lower", "coverage_upper",
+    "coverage_year"
+  )
+  if (!is.data.frame(events) || !all(needed %in% names(events)) ||
+        !is.data.frame(history$cells) ||
+        !all(c("cell", "birth_month") %in% names(history$cells))) {
+    cli::cli_abort(c(
+      "{.arg history} must be the output of {.fn build_vaccination_history}.",
+      "i" = "Rebuild it with the current version of the package."
+    ))
+  }
+  if (nrow(events) > 0) {
     if (any(!is.finite(events$coverage)) ||
           any(events$coverage < 0 | events$coverage > 1)) {
       cli::cli_abort("Opportunity coverage must be between 0 and 1.")
     }
     if (!all(events$type %in% c("mcv1", "mcv2", "sia"))) {
       cli::cli_abort("Opportunity types must be mcv1, mcv2 or sia.")
+    }
+    if (any(events$day_from < 1 | events$day_to < events$day_from) ||
+          any(events$date_to < events$date_from)) {
+      cli::cli_abort("Opportunity days and dates are out of order.")
+    }
+    couplings <- .optional_column(events, "coupling")
+    if (!all(is.na(couplings) |
+               couplings %in% c("dependent", "independent", "complementary"))) {
+      cli::cli_abort(
+        "A {.val coupling} column in the history must hold the coupling rules."
+      )
     }
   }
   invisible(TRUE)
@@ -181,7 +325,7 @@ ve_cdc <- function(
 # state ------------------------------------------------------------------------
 
 # internal helper: a new state, one row per cohort and occupied state. every
-# child starts with no doses, no MCV1 and no protection
+# child starts with no doses, no MCV1, no protection and no campaign marker
 #' @noRd
 .new_state <- function(cells) {
   dplyr::tibble(
@@ -189,8 +333,19 @@ ve_cdc <- function(
     doses = 0L,
     mcv1 = FALSE,
     protected = FALSE,
+    markers = rep(list(character()), length(cells$cell)),
     share = 1
   )
+}
+
+# internal helper: a text key for each set of campaign markers, so states
+# can be grouped on it
+#' @noRd
+.marker_key <- function(markers) {
+  purrr::map_chr(markers, \(m) {
+    sorted <- sort(m)
+    paste(paste0(nchar(sorted), ":", sorted), collapse = "|")
+  })
 }
 
 # internal helper: shares of each cohort by vaccination state
@@ -198,27 +353,28 @@ ve_cdc <- function(
 .summarise_state <- function(state) {
   state |>
     dplyr::summarise(
-      susceptible_share = sum(share[!protected]),
-      dose_0 = sum(share[doses == 0]),
-      dose_1 = sum(share[doses == 1]),
-      dose_2 = sum(share[doses == 2]),
-      dose_3_plus = sum(share[doses >= 3]),
+      susceptible_share = sum(.data$share * !.data$protected),
+      dose_0 = sum(.data$share * (.data$doses == 0)),
+      dose_1 = sum(.data$share * (.data$doses == 1)),
+      dose_2 = sum(.data$share * (.data$doses == 2)),
+      dose_3_plus = sum(.data$share * (.data$doses >= 3)),
       .by = "cell"
     )
 }
 
-# internal helper: effectiveness by dose type and lower bound of each age
-# band in months
+# internal helper: effectiveness by dose type and age band, with the lower
+# bound of each band in months
 #' @noRd
 .ve_table <- function(ve) {
   dplyr::tibble(
+    band = seq_along(ve$breaks),
     age_from = ve$breaks,
     mcv1 = ve$mcv1,
     mcv2 = ve$mcv2,
     sia = ve$sia
   ) |>
     tidyr::pivot_longer(
-      -"age_from",
+      c("mcv1", "mcv2", "sia"),
       names_to = "type", values_to = "effectiveness"
     )
 }
@@ -248,42 +404,61 @@ ve_cdc <- function(
 }
 
 # internal helper: reached children get one more dose; an mcv1 dose also
-# sets the mcv1 flag
+# sets the mcv1 flag; a campaign day marks them as reached by the campaign
 #' @noRd
 .add_dose <- function(states, max_doses) {
   states |>
     dplyr::mutate(
       doses = pmin(.data$doses + 1L, max_doses),
-      mcv1 = .data$mcv1 | .data$type == "mcv1"
+      mcv1 = .data$mcv1 | .data$type == "mcv1",
+      markers = purrr::pmap(
+        list(.data$markers, .data$event_id, .data$set_marker),
+        \(m, id, set) if (set) union(m, id) else m
+      )
     )
 }
 
-# internal helper: apply one opportunity per cohort. each tier takes what is
-# left of the reach, in proportion to its share; reached children who are
-# not protected become protected with the effectiveness of the dose
+# internal helper: apply one opportunity per cohort. the opportunity reaches
+# `reach` of the eligible share (everyone, or children not yet marked by
+# this campaign when `restrict`); each tier takes what is left of that
+# mass in proportion to its share; reached children who are not protected
+# become protected with the effectiveness of the dose. markers of a
+# campaign are cleared on its last day (`clear_marker`)
 #' @noRd
 .apply_opportunity <- function(state, events, tiers, max_doses) {
+  state_cols <- c("cell", "doses", "mcv1", "protected", "markers", "share")
   untouched <- dplyr::anti_join(state, events, by = "cell")
 
   joined <- state |>
     dplyr::inner_join(events, by = "cell") |>
+    dplyr::mutate(
+      eligible = !.data$restrict | !purrr::map2_lgl(
+        .data$markers, .data$event_id, \(m, id) id %in% m
+      )
+    )
+  passive <- joined |>
+    dplyr::filter(!.data$eligible) |>
+    dplyr::select(dplyr::all_of(state_cols))
+  active <- joined |>
+    dplyr::filter(.data$eligible) |>
     dplyr::inner_join(tiers, by = c("type", "coupling", "doses", "mcv1"))
 
-  fraction <- joined |>
+  fraction <- active |>
     dplyr::summarise(
-      tier_share = sum(share),
+      tier_share = sum(.data$share),
       .by = c("cell", "tier", "reach")
     ) |>
     dplyr::arrange(.data$cell, .data$tier) |>
     dplyr::mutate(
-      filled = cumsum(tier_share) - tier_share,
-      fraction = (reach - filled) / tier_share,
-      fraction = pmin(pmax(fraction, 0), 1),
+      mass = .data$reach * sum(.data$tier_share),
+      filled = cumsum(.data$tier_share) - .data$tier_share,
+      fraction = (.data$mass - .data$filled) / .data$tier_share,
+      fraction = pmin(pmax(.data$fraction, 0), 1),
       .by = "cell"
     ) |>
     dplyr::select("cell", "tier", "fraction")
 
-  reached <- joined |>
+  reached <- active |>
     dplyr::left_join(fraction, by = c("cell", "tier")) |>
     dplyr::mutate(moved = .data$share * .data$fraction)
 
@@ -304,45 +479,91 @@ ve_cdc <- function(
     ) |>
     .add_dose(max_doses)
 
-  dplyr::bind_rows(untouched, stays, fails, protects) |>
-    dplyr::summarise(
-      share = sum(share),
-      .by = c("cell", "doses", "mcv1", "protected")
+  # a campaign's own marker is dropped on its last eligible day, so states
+  # merge again once the campaign is over
+  clearing <- events |>
+    dplyr::filter(.data$clear_marker) |>
+    dplyr::select("cell", ended = "event_id")
+
+  dplyr::bind_rows(
+    passive,
+    dplyr::select(stays, dplyr::all_of(state_cols)),
+    dplyr::select(fails, dplyr::all_of(state_cols)),
+    dplyr::select(protects, dplyr::all_of(state_cols))
+  ) |>
+    dplyr::left_join(clearing, by = "cell") |>
+    dplyr::mutate(
+      markers = purrr::map2(
+        .data$markers, .data$ended,
+        \(m, id) if (is.na(id)) m else setdiff(m, id)
+      ),
+      marker_key = .marker_key(.data$markers)
     ) |>
-    dplyr::filter(.data$share != 0)
+    dplyr::summarise(
+      share = sum(.data$share),
+      markers = list(dplyr::first(.data$markers)),
+      .by = c("cell", "doses", "mcv1", "protected", "marker_key")
+    ) |>
+    dplyr::filter(.data$share != 0) |>
+    dplyr::select(dplyr::all_of(state_cols)) |>
+    dplyr::bind_rows(untouched)
 }
 
 # run --------------------------------------------------------------------------
 
-# internal helper: run every cohort's opportunities in order, carrying the
-# state from step to step. returns the state summary after each step and
-# each opportunity's contribution
+# internal helper: a typed, empty table of engine events
+#' @noRd
+.engine_empty_events <- function() {
+  dplyr::tibble(
+    cell = integer(0), event_id = character(0), type = character(0),
+    month = as.Date(character(0)), eligible_share = numeric(0),
+    timing_share = numeric(0), age_at_dose = numeric(0),
+    coverage = numeric(0)
+  )
+}
+
+# internal helper: run whole-cohort opportunities in month order. each event
+# reaches coverage x eligible_share of its cohort with the effectiveness for
+# `age_at_dose`, as in the CDC one-step formulas. returns the state summary
+# after each step and each opportunity's contribution
 #' @noRd
 .run_engine <- function(cells, events, coupling, ve, max_doses) {
-  tiers <- .tier_lookup(max_doses)
   if (is.null(events)) {
-    events <- dplyr::tibble(
-      cell = integer(0), event_id = character(0), type = character(0),
-      month = as.Date(character(0)), eligible_share = numeric(0),
-      timing_share = numeric(0), age_at_dose = numeric(0),
-      coverage = numeric(0)
-    )
+    events <- .engine_empty_events()
   }
-  default_coupling <- coupling
   events <- events |>
-    dplyr::mutate(coupling = .optional_column(events, "coupling")) |>
-    dplyr::filter(.data$coverage > 0, .data$eligible_share > 0) |>
     dplyr::mutate(
-      coupling = dplyr::coalesce(coupling, default_coupling),
-      reach = coverage * eligible_share,
-      age_at_dose = pmax(age_at_dose, min(ve$breaks)),
-      type_order = match(type, c("mcv1", "mcv2", "sia"))
+      reach = .data$coverage * .data$eligible_share,
+      age_at_dose = pmax(.data$age_at_dose, min(ve$breaks)),
+      type_order = match(.data$type, c("mcv1", "mcv2", "sia")),
+      restrict = FALSE,
+      set_marker = FALSE,
+      clear_marker = FALSE
     ) |>
     dplyr::left_join(
       .ve_table(ve),
       by = dplyr::join_by("type", closest("age_at_dose" >= "age_from"))
     ) |>
-    dplyr::arrange(cell, month, type_order) |>
+    dplyr::arrange(.data$cell, .data$month, .data$type_order, .data$event_id)
+  .run_steps(cells, events, coupling, max_doses)
+}
+
+# internal helper: run every cohort's events in the order given, carrying
+# the state from step to step. events need cell, event_id, type, reach,
+# effectiveness, restrict, set_marker and clear_marker, and may carry a
+# coupling column. returns the state summary after each step (with the
+# event columns in key_cols), each event's contribution, the full states
+# and the events with their step numbers
+#' @noRd
+.run_steps <- function(cells, events, coupling, max_doses) {
+  tiers <- .tier_lookup(max_doses)
+  default_coupling <- coupling
+  events <- events |>
+    dplyr::mutate(coupling = .optional_column(events, "coupling")) |>
+    dplyr::filter(.data$reach > 0) |>
+    dplyr::mutate(
+      coupling = dplyr::coalesce(.data$coupling, default_coupling)
+    ) |>
     dplyr::mutate(step = dplyr::row_number(), .by = "cell")
 
   by_step <- events |>
@@ -358,14 +579,16 @@ ve_cdc <- function(
     .simplify = FALSE
   )
 
-  step_keys <- dplyr::bind_rows(
-    dplyr::tibble(
-      cell = cells$cell, step = 0L, month = as.Date(NA), timing_share = 1
+  key_cols <- intersect(
+    c(
+      "cell", "step", "event_id", "type", "month", "report_month", "reach",
+      "history_row"
     ),
-    dplyr::select(
-      events,
-      "cell", "step", "event_id", "type", "month", "timing_share", "reach"
-    )
+    names(events)
+  )
+  step_keys <- dplyr::bind_rows(
+    dplyr::tibble(cell = cells$cell, step = 0L),
+    dplyr::select(events, dplyr::all_of(key_cols))
   )
 
   steps <- purrr::map2(
@@ -378,27 +601,399 @@ ve_cdc <- function(
 
   contributions <- steps |>
     dplyr::mutate(
-      newly_protected = dplyr::lag(susceptible_share) -
-        susceptible_share,
+      newly_protected = dplyr::lag(.data$susceptible_share) -
+        .data$susceptible_share,
+      first_doses = dplyr::lag(.data$dose_0) - .data$dose_0,
       .by = "cell"
     ) |>
     dplyr::filter(.data$step > 0) |>
     dplyr::select(
-      "cell", "event_id", "type", "month",
-      reached = "reach", "newly_protected"
+      dplyr::any_of(c(
+        "cell", "step", "event_id", "type", "month", "report_month",
+        "history_row"
+      )),
+      reached = "reach", "newly_protected", "first_doses"
     )
 
-  list(steps = steps, contributions = contributions)
+  list(steps = steps, contributions = contributions, states = states,
+       events = events)
+}
+
+# birth days -------------------------------------------------------------------
+
+# internal helper: run the opportunities of every cohort by day of birth,
+# with exact dates. returns the runs of birth days (`units`, with their
+# cohort and weight), the state of each run at the 15th of every month in
+# which it changes, and each opportunity's contribution to its cohort
+#' @noRd
+.run_cohorts <- function(cells, events, coupling, ve, max_doses) {
+  # a campaign may share its name with a dose type, and a dose may be due
+  # at different ages in different periods, so opportunities are keyed by
+  # type, identifier and schedule age together
+  events <- events |>
+    dplyr::mutate(
+      history_row = dplyr::row_number(),
+      event_key = .record_key(
+        events, c("type", "event_id", "age_months"), "event"
+      ),
+      coupling = as.character(.optional_column(events, "coupling"))
+    )
+  patterns <- .cohort_patterns(cells, events)
+  dated <- .pattern_subevents(patterns$patterns, patterns$definitions, ve)
+
+  units <- patterns$cells |>
+    dplyr::inner_join(
+      dated$groups, by = "pattern", relationship = "many-to-many"
+    ) |>
+    dplyr::arrange(.data$cell, .data$rep_day) |>
+    dplyr::mutate(unit = dplyr::row_number()) |>
+    dplyr::select("unit", "cell", "pattern", "group", "rep_day", "weight")
+
+  # each run's sub-events take the coverage of its cohort's history row
+  unit_events <- units |>
+    dplyr::inner_join(
+      dated$subevents, by = c("pattern", "group"),
+      relationship = "many-to-many"
+    ) |>
+    dplyr::inner_join(
+      dplyr::select(
+        events, "cell", "event_key", "history_row", "day_from", "day_to",
+        "coverage", "coupling"
+      ),
+      by = dplyr::join_by(
+        "cell", "event_key", "rep_day" >= "day_from", "rep_day" <= "day_to"
+      )
+    ) |>
+    dplyr::mutate(
+      reach = dplyr::if_else(
+        .data$type == "sia",
+        (.data$coverage / .data$n) /
+          (1 - .data$coverage * (.data$k - 1) / .data$n),
+        .data$coverage
+      ),
+      restrict = .data$type == "sia",
+      set_marker = .data$type == "sia",
+      clear_marker = .data$type == "sia" & .data$k == .data$n
+    ) |>
+    dplyr::left_join(
+      dplyr::select(.ve_table(ve), "band", "type", "effectiveness"),
+      by = c("band", "type")
+    ) |>
+    dplyr::arrange(
+      .data$unit, .data$date, .data$type_order, .data$event_id, .data$k
+    ) |>
+    dplyr::transmute(
+      cell = .data$unit, .data$event_id, .data$type, .data$reach,
+      .data$effectiveness, .data$restrict, .data$set_marker,
+      .data$clear_marker, .data$report_month, .data$history_row,
+      .data$coupling
+    )
+
+  run <- .run_steps(
+    dplyr::transmute(units, cell = .data$unit), unit_events, coupling,
+    max_doses
+  )
+
+  value_cols <- c(
+    "susceptible_share", "dose_0", "dose_1", "dose_2", "dose_3_plus"
+  )
+  unit_values <- run$steps |>
+    dplyr::filter(.data$step > 0) |>
+    dplyr::slice_max(
+      .data$step, n = 1, by = c("cell", "report_month"), with_ties = FALSE
+    ) |>
+    dplyr::transmute(
+      unit = .data$cell,
+      month = .month_from_index(.data$report_month),
+      dplyr::across(dplyr::all_of(value_cols))
+    )
+
+  opportunities <- .cohort_opportunities(events, run$contributions, units)
+  membership <- dplyr::distinct(
+    unit_events, unit = .data$cell, .data$history_row
+  )
+
+  list(
+    units = units,
+    unit_values = unit_values,
+    opportunities = opportunities,
+    campaign_targets = .campaign_targets(
+      events, membership, units, unit_values, opportunities
+    )
+  )
+}
+
+# internal helper: the vaccination state of each campaign's target children
+# (the birth days it can reach) on the 15th of the month before it starts
+# and of the month after it ends, from the exact run states. one row per
+# cohort and campaign, with the share of the cohort that is targeted
+#' @noRd
+.campaign_targets <- function(events, membership, units, unit_values,
+                              opportunities) {
+  value_cols <- c("dose_0", "dose_1", "dose_2", "dose_3_plus")
+  start <- list(dose_0 = 1, dose_1 = 0, dose_2 = 0, dose_3_plus = 0)
+  campaigns <- events |>
+    dplyr::filter(.data$type == "sia") |>
+    dplyr::transmute(
+      .data$history_row, .data$cell, .data$event_id,
+      before = .month_from_index(.month_index(.data$start_date) - 1L),
+      after = .month_from_index(.month_index(.data$end_date) + 1L)
+    )
+  changes <- dplyr::select(
+    unit_values, "unit", value_month = "month", dplyr::all_of(value_cols)
+  )
+
+  .state_at <- function(targets, when) {
+    targets |>
+      dplyr::mutate(at_month = .data[[when]]) |>
+      dplyr::left_join(
+        changes,
+        by = dplyr::join_by("unit", closest("at_month" >= "value_month"))
+      ) |>
+      tidyr::replace_na(start) |>
+      dplyr::summarise(
+        dplyr::across(
+          dplyr::all_of(value_cols),
+          \(x) sum(x * .data$weight) / sum(.data$weight),
+          .names = paste0("{.col}_", when)
+        ),
+        .by = "history_row"
+      )
+  }
+
+  targets <- campaigns |>
+    dplyr::inner_join(membership, by = "history_row") |>
+    dplyr::inner_join(
+      dplyr::select(units, "unit", "weight"), by = "unit"
+    )
+  by_row <- targets |>
+    dplyr::summarise(
+      eligible_share = sum(.data$weight),
+      .by = c("history_row", "cell", "event_id", "before", "after")
+    ) |>
+    dplyr::inner_join(.state_at(targets, "before"), by = "history_row") |>
+    dplyr::inner_join(.state_at(targets, "after"), by = "history_row")
+
+  # cohorts with several runs of eligible days for one campaign are added
+  # up by their eligible shares
+  by_row |>
+    dplyr::summarise(
+      before = dplyr::first(.data$before),
+      after = dplyr::first(.data$after),
+      dplyr::across(
+        dplyr::all_of(c(
+          paste0(value_cols, "_before"), paste0(value_cols, "_after")
+        )),
+        \(x) sum(x * .data$eligible_share) / sum(.data$eligible_share)
+      ),
+      eligible_share = sum(.data$eligible_share),
+      .by = c("cell", "event_id")
+    ) |>
+    dplyr::inner_join(
+      dplyr::select(opportunities, "cell", "event_id", "first_doses"),
+      by = c("cell", "event_id")
+    )
+}
+
+# internal helper: group cohorts that share a birth month and the same set
+# of opportunity definitions (dates, ages and eligible days, not coverage),
+# so the dated sub-events are worked out once per group
+#' @noRd
+.cohort_patterns <- function(cells, events) {
+  definition_cols <- c(
+    "event_key", "event_id", "type", "age_months", "start_date", "end_date",
+    "age_min_months", "age_max_months", "day_from", "day_to"
+  )
+  keyed <- events |>
+    dplyr::arrange(
+      .data$cell, dplyr::across(dplyr::all_of(definition_cols))
+    )
+  keyed <- keyed |>
+    dplyr::mutate(definition = .record_key(keyed, definition_cols, "")) |>
+    dplyr::summarise(
+      def_key = paste(.data$definition, collapse = ";"), .by = "cell"
+    )
+  cells_keyed <- cells |>
+    dplyr::select("cell", "birth_month") |>
+    dplyr::left_join(keyed, by = "cell") |>
+    dplyr::mutate(def_key = dplyr::coalesce(.data$def_key, ""))
+  patterns <- cells_keyed |>
+    dplyr::distinct(
+      dplyr::across(dplyr::all_of(c("birth_month", "def_key")))
+    ) |>
+    dplyr::mutate(pattern = dplyr::row_number())
+  cells_keyed <- cells_keyed |>
+    dplyr::inner_join(patterns, by = c("birth_month", "def_key")) |>
+    dplyr::select("cell", "pattern")
+
+  # one representative cohort per pattern gives its definitions
+  representative <- cells_keyed |>
+    dplyr::slice_min(.data$cell, n = 1, by = "pattern", with_ties = FALSE)
+  definitions <- events |>
+    dplyr::inner_join(representative, by = "cell") |>
+    dplyr::distinct(
+      dplyr::across(dplyr::all_of(c("pattern", definition_cols)))
+    )
+
+  list(
+    cells = cells_keyed,
+    patterns = dplyr::select(patterns, "pattern", "birth_month"),
+    definitions = definitions
+  )
+}
+
+# internal helper: the dated sub-events of every birth day of each pattern:
+# one per routine dose, and one per eligible campaign day. birth days with
+# the same sequence of sub-events (same opportunities in the same order,
+# reporting months and effectiveness bands) form one group, represented by
+# its first day. returns the groups with their weights and the sub-events
+# of each group's representative day
+#' @noRd
+.pattern_subevents <- function(patterns, definitions, ve) {
+  days <- patterns |>
+    dplyr::mutate(
+      n_days = .days_in_month(.month_index(.data$birth_month)),
+      days_in_month = .data$n_days
+    ) |>
+    tidyr::uncount(.data$n_days, .id = "day") |>
+    dplyr::mutate(birth_date = .data$birth_month + .data$day - 1L)
+  on_days <- definitions |>
+    dplyr::inner_join(
+      dplyr::select(days, "pattern", "day", "birth_date"),
+      by = dplyr::join_by("pattern", "day_from" <= "day", "day_to" >= "day")
+    )
+
+  routine <- on_days |>
+    dplyr::filter(.data$type != "sia") |>
+    dplyr::mutate(
+      date = .add_months(.data$birth_date, .data$age_months),
+      k = 1L, n = 1L
+    )
+  campaign <- on_days |>
+    dplyr::filter(.data$type == "sia") |>
+    dplyr::mutate(
+      from = pmax(
+        .data$start_date, .add_months(.data$birth_date, .data$age_min_months)
+      ),
+      to = pmin(
+        .data$end_date,
+        .add_months(.data$birth_date, .data$age_max_months) - 1L
+      ),
+      n = as.integer(.data$to - .data$from) + 1L
+    ) |>
+    tidyr::uncount(.data$n, .id = "k", .remove = FALSE) |>
+    dplyr::mutate(date = .data$from + .data$k - 1L) |>
+    dplyr::select(-"from", -"to")
+
+  bands <- dplyr::tibble(age_from = ve$breaks) |>
+    dplyr::mutate(band = dplyr::row_number())
+  subevents <- dplyr::bind_rows(routine, campaign) |>
+    dplyr::mutate(
+      age = pmax(.age_in_months(.data$birth_date, .data$date), min(ve$breaks)),
+      report_month = .report_month_index(.data$date),
+      type_order = match(.data$type, c("mcv1", "mcv2", "sia"))
+    ) |>
+    dplyr::left_join(
+      bands, by = dplyr::join_by(closest("age" >= "age_from"))
+    ) |>
+    dplyr::arrange(
+      .data$pattern, .data$day, .data$date, .data$type_order,
+      .data$event_id, .data$k
+    ) |>
+    dplyr::select(
+      "pattern", "day", "event_key", "event_id", "type", "type_order", "k",
+      "n", "date", "report_month", "band"
+    )
+
+  signatures <- subevents |>
+    dplyr::summarise(
+      signature = paste(
+        .data$event_key, .data$k, .data$n, .data$report_month,
+        .data$band, sep = ":", collapse = ";"
+      ),
+      .by = c("pattern", "day")
+    )
+  grouped_days <- days |>
+    dplyr::left_join(signatures, by = c("pattern", "day")) |>
+    dplyr::mutate(signature = dplyr::coalesce(.data$signature, ""))
+  groups <- grouped_days |>
+    dplyr::summarise(
+      rep_day = min(.data$day),
+      weight = dplyr::n() / dplyr::first(.data$days_in_month),
+      .by = c("pattern", "signature")
+    ) |>
+    dplyr::arrange(.data$pattern, .data$rep_day) |>
+    dplyr::mutate(group = dplyr::row_number()) |>
+    dplyr::select("pattern", "group", "rep_day", "weight")
+
+  list(
+    groups = groups,
+    subevents = subevents |>
+      dplyr::inner_join(
+        dplyr::select(groups, "pattern", "group", day = "rep_day"),
+        by = c("pattern", "day")
+      ) |>
+      dplyr::select(-"day")
+  )
+}
+
+# internal helper: the first month whose reporting date (the 15th) is on or
+# after each date
+#' @noRd
+.report_month_index <- function(date) {
+  .month_index(date) + as.integer(as.POSIXlt(date)$mday > 15L)
+}
+
+# internal helper: each opportunity's contribution to its cohort, adding up
+# the runs of birth days it covers. one row per cohort and opportunity
+#' @noRd
+.cohort_opportunities <- function(events, contributions, units) {
+  if (nrow(events) == 0) {
+    return(dplyr::tibble(
+      cell = integer(), event_id = character(), type = character(),
+      month = as.Date(character()), date_from = as.Date(character()),
+      date_to = as.Date(character()), eligible_share = numeric(),
+      reached = numeric(), newly_protected = numeric(),
+      first_doses = numeric()
+    ))
+  }
+  by_row <- contributions |>
+    dplyr::inner_join(
+      dplyr::select(units, "unit", "weight"), by = c(cell = "unit")
+    ) |>
+    dplyr::summarise(
+      newly_protected = sum(.data$newly_protected * .data$weight),
+      first_doses = sum(.data$first_doses * .data$weight),
+      .by = "history_row"
+    )
+
+  events |>
+    dplyr::left_join(by_row, by = "history_row") |>
+    dplyr::mutate(
+      newly_protected = dplyr::coalesce(.data$newly_protected, 0),
+      first_doses = dplyr::coalesce(.data$first_doses, 0)
+    ) |>
+    dplyr::summarise(
+      month = min(.data$month),
+      date_from = min(.data$date_from),
+      date_to = max(.data$date_to),
+      eligible_share = sum(.data$eligible_share),
+      reached = sum(.data$coverage * .data$eligible_share),
+      newly_protected = sum(.data$newly_protected),
+      first_doses = sum(.data$first_doses),
+      .by = c("cell", "event_id", "type")
+    ) |>
+    dplyr::arrange(.data$cell, .data$date_from, .data$type)
 }
 
 # monthly values ---------------------------------------------------------------
 
-# internal helper: state of each cohort on the 15th of each month. a month
-# takes the state at the end of the latest earlier month with opportunities;
-# a month with opportunities takes its own mid-month state instead, which is
-# the end-of-month state less the part of each change still to come
+# internal helper: state of each cohort on the 15th of each month, adding up
+# its runs of birth days by their share of the cohort. a run keeps the
+# state of its latest change month; before any change every child is
+# unvaccinated. extra columns of `cells`, such as a draw number, are kept
 #' @noRd
-.monthly_values <- function(panel, cells, steps, geography) {
+.monthly_values <- function(panel, cells, units, unit_values, geography) {
   value_cols <- c(
     "susceptible_share", "dose_0", "dose_1", "dose_2", "dose_3_plus"
   )
@@ -406,46 +1001,28 @@ ve_cdc <- function(
     susceptible_share = 1, dose_0 = 1, dose_1 = 0, dose_2 = 0,
     dose_3_plus = 0
   )
+  changes <- dplyr::rename(unit_values, value_month = "month")
 
-  by_month <- steps |>
-    tidyr::pivot_longer(
-      dplyr::all_of(value_cols),
-      names_to = "measure", values_to = "value"
-    ) |>
-    dplyr::arrange(.data$cell, .data$measure, .data$step) |>
-    dplyr::mutate(
-      pending = (value - dplyr::lag(value)) *
-        (1 - timing_share),
-      .by = c("cell", "measure")
-    ) |>
-    dplyr::filter(.data$step > 0) |>
-    dplyr::summarise(
-      end = dplyr::last(value),
-      mid = dplyr::last(value) - sum(pending),
-      .by = c("cell", "month", "measure")
-    )
-
-  ends <- by_month |>
-    tidyr::pivot_wider(
-      id_cols = c("cell", "month"),
-      names_from = "measure", values_from = "end"
-    ) |>
-    dplyr::rename(event_month = "month")
-  mids <- by_month |>
-    tidyr::pivot_wider(
-      id_cols = c("cell", "month"),
-      names_from = "measure", values_from = "mid"
-    )
-
-  panel |>
+  joined <- panel |>
     dplyr::left_join(cells, by = c(geography, "birth_month")) |>
-    dplyr::left_join(
-      ends,
-      by = dplyr::join_by("cell", closest("month" > "event_month"))
+    dplyr::inner_join(
+      dplyr::select(units, "unit", "cell", "weight"),
+      by = "cell", relationship = "many-to-many"
     ) |>
-    dplyr::rows_update(mids, by = c("cell", "month"), unmatched = "ignore") |>
-    tidyr::replace_na(start) |>
-    dplyr::select(-"cell", -"event_month")
+    dplyr::left_join(
+      changes,
+      by = dplyr::join_by("unit", closest("month" >= "value_month"))
+    ) |>
+    tidyr::replace_na(start)
+  keys <- setdiff(
+    names(joined),
+    c(value_cols, "cell", "unit", "weight", "value_month")
+  )
+  joined |>
+    dplyr::summarise(
+      dplyr::across(dplyr::all_of(value_cols), \(x) sum(x * .data$weight)),
+      .by = dplyr::all_of(keys)
+    )
 }
 
 # uncertainty ------------------------------------------------------------------
@@ -456,28 +1033,39 @@ ve_cdc <- function(
 #' intervals, and summarises the susceptible population across draws.
 #'
 #' @details
-#' Coverage is drawn on the logit scale, with a normal distribution whose
-#' 95% interval matches `coverage_lower` to `coverage_upper` (IHME bounds
-#' for routine coverage, survey intervals for campaigns). Coverage without
-#' an interval is kept fixed.
+#' Coverage is drawn on the logit scale from a normal distribution centred
+#' on the logit of the coverage, with a standard deviation set so that the
+#' width of its 95% interval matches the width of `coverage_lower` to
+#' `coverage_upper` on the logit scale (IHME bounds for routine coverage,
+#' survey intervals for campaigns). The draws are symmetric on the logit
+#' scale, so an interval that is not symmetric around the coverage on that
+#' scale is matched in width only, not bound by bound. Coverage without an
+#' interval is kept fixed, and the draws never move it.
 #'
-#' Routine coverage draws are correlated across years within a geography
-#' and dose (first-order autocorrelation `rho_years`) and between MCV1 and
-#' MCV2 in the same year (`rho_doses`). Each campaign record is drawn on its
-#' own.
+#' One value is drawn per coverage record (`record` in the history), so a
+#' campaign record given for a whole country or region is drawn once and
+#' applied to every cohort inside it. Routine coverage draws are correlated
+#' across coverage years within a geography and dose with first-order
+#' autocorrelation `rho_years` per year elapsed (so years two apart have
+#' correlation `rho_years^2`, whether or not the year between has data),
+#' and between MCV1 and MCV2 in the same year (`rho_doses`).
+#'
+#' The random number generator state is restored after the call, so the
+#' draws do not disturb other random work in the session.
 #'
 #' **Parallel runs.** When mirai daemons are set, for example with
 #' `mirai::daemons(6)`, batches of draws run in parallel on the daemons.
-#' Coverage is drawn before the batches are sent out, so the result is the
-#' same with or without daemons. The daemons load the installed mipR.
+#' Coverage is drawn before the batches are sent out and each draw's engine
+#' run is deterministic, so the result is the same with or without daemons
+#' and for any `batch_size`. The daemons load the installed mipR.
 #'
 #' @inheritParams estimate_immunity
 #' @param n_draws Number of draws. Default `100`.
 #' @param seed Random seed, so the draws can be reproduced. Default `1`.
 #' @param rho_years Correlation of routine coverage between consecutive
-#'   years. Default `0.9`.
+#'   years, between -1 and 1. Default `0.9`.
 #' @param rho_doses Correlation between MCV1 and MCV2 coverage in the same
-#'   year. Default `0.5`.
+#'   year, between -1 and 1. Default `0.5`.
 #' @param batch_size Number of draws run through the engine together.
 #'   Larger batches use more memory. Default `10`.
 #' @param ... Passed to [summarise_immunity()], for example `geography`,
@@ -507,21 +1095,31 @@ immunity_draws <- function(
   rho_years = 0.9,
   rho_doses = 0.5,
   batch_size = 10,
+  max_doses = 8L,
   ...
 ) {
   coupling <- match.arg(coupling)
+  .check_ve(ve)
+  n_draws <- .check_count(n_draws, "n_draws")
+  batch_size <- .check_count(batch_size, "batch_size")
+  max_doses <- .check_count(max_doses, "max_doses", lower = 3)
+  .check_number(seed, "seed")
+  .check_number(rho_years, "rho_years", lower = -1, upper = 1)
+  .check_number(rho_doses, "rho_doses", lower = -1, upper = 1)
+  .check_number(maternal_months, "maternal_months", lower = 0)
   .check_history(history)
   geography <- setdiff(names(history$cells), c("cell", "birth_month"))
   panel <- .cohort_panel_input(cohorts, geography)
   cells <- history$cells
 
   # with `at`, only the cohorts alive in those months and the opportunities
-  # up to them affect the summary, so the engine runs on those alone
+  # that have started by the last of them affect the summary, so the engine
+  # runs on those alone
   at <- list(...)$at
-  last_month <- NULL
+  last_report <- NULL
   if (!is.null(at)) {
     months <- .month_from_index(.month_index(.as_date(at, "at")))
-    last_month <- max(months)
+    last_report <- max(months) + 14L
     panel <- dplyr::filter(panel, .data$month %in% months)
     cells <- dplyr::semi_join(
       cells, panel, by = c(geography, "birth_month")
@@ -530,19 +1128,20 @@ immunity_draws <- function(
 
   # coverage is drawn for every opportunity before trimming, so the draws
   # do not depend on `at`
-  set.seed(seed)
-  drawn <- purrr::map(seq_len(n_draws), \(d) {
-    drawn_events <- .draw_coverage(
-      history$history, geography, rho_years, rho_doses
-    )
-    if (!is.null(last_month)) {
-      drawn_events <- drawn_events |>
-        dplyr::filter(
-          .data$cell %in% cells$cell,
-          .data$month <= last_month
-        )
-    }
-    drawn_events
+  drawn <- .with_seed(seed, {
+    purrr::map(seq_len(n_draws), \(d) {
+      drawn_events <- .draw_coverage(
+        history$history, geography, rho_years, rho_doses
+      )
+      if (!is.null(last_report)) {
+        drawn_events <- drawn_events |>
+          dplyr::filter(
+            .data$cell %in% cells$cell,
+            .data$date_from <= last_report
+          )
+      }
+      drawn_events
+    })
   })
 
   # the summary is grouped by draw as well as geography
@@ -553,12 +1152,15 @@ immunity_draws <- function(
 
   # batches of draws, each run through the engine in one pass; batches run
   # in parallel when mirai daemons are set
-  batches <- split(seq_len(n_draws), ceiling(seq_len(n_draws) / batch_size)) |>
-    purrr::map(\(batch) list(draws = batch, events = drawn[batch]))
+  batches <- dplyr::tibble(draw = seq_len(n_draws), events = drawn) |>
+    dplyr::mutate(batch = (.data$draw - 1L) %/% batch_size) |>
+    tidyr::nest(.by = "batch") |>
+    dplyr::pull("data")
   batch_args <- list(
     cells = cells, cell_offset = max(c(0L, history$cells$cell)),
     panel = panel, geography = geography, coupling = coupling, ve = ve,
-    maternal_months = maternal_months, summary_args = summary_args
+    maternal_months = maternal_months, max_doses = max_doses,
+    summary_args = summary_args
   )
   parallel <- requireNamespace("mirai", quietly = TRUE) &&
     mirai::daemons_set()
@@ -583,23 +1185,43 @@ immunity_draws <- function(
   )
   draws |>
     dplyr::summarise(
-      population = dplyr::first(population),
-      susceptible_median = stats::median(susceptible),
-      susceptible_lower = stats::quantile(susceptible, 0.025),
-      susceptible_upper = stats::quantile(susceptible, 0.975),
-      share_median = stats::median(susceptible_share),
-      share_lower = stats::quantile(susceptible_share, 0.025),
-      share_upper = stats::quantile(susceptible_share, 0.975),
+      population = dplyr::first(.data$population),
+      susceptible_median = stats::median(.data$susceptible),
+      susceptible_lower = stats::quantile(.data$susceptible, 0.025),
+      susceptible_upper = stats::quantile(.data$susceptible, 0.975),
+      share_median = stats::median(.data$susceptible_share),
+      share_lower = stats::quantile(.data$susceptible_share, 0.025),
+      share_upper = stats::quantile(.data$susceptible_share, 0.975),
       .by = dplyr::all_of(keys)
     )
 }
 
+# internal helper: run code with a seed, then put the random number
+# generator back as it was
+#' @noRd
+.with_seed <- function(seed, code) {
+  had_seed <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
+  old_seed <- if (had_seed) get(".Random.seed", envir = globalenv())
+  on.exit(
+    if (had_seed) {
+      assign(".Random.seed", old_seed, envir = globalenv())
+    } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      rm(".Random.seed", envir = globalenv())
+    },
+    add = TRUE
+  )
+  set.seed(seed)
+  force(code)
+}
+
 # internal helper: run one batch of draws through the engine and summarise
-# it. every cohort is copied once per draw under its own cell number
+# it. every cohort is copied once per draw under its own cell number. batch
+# has one row per draw, with the draw number and its drawn events
 #' @noRd
 .draw_batch <- function(batch, cells, cell_offset, panel, geography,
-                        coupling, ve, maternal_months, summary_args) {
-  batch_cells <- purrr::map(batch$draws, \(d) {
+                        coupling, ve, maternal_months, max_doses,
+                        summary_args) {
+  batch_cells <- purrr::map(batch$draw, \(d) {
     dplyr::mutate(
       cells,
       cell = .data$cell + (d - 1L) * cell_offset,
@@ -607,13 +1229,15 @@ immunity_draws <- function(
     )
   }) |>
     purrr::list_rbind()
-  batch_events <- purrr::map2(batch$draws, batch$events, \(d, events) {
+  batch_events <- purrr::map2(batch$draw, batch$events, \(d, events) {
     dplyr::mutate(events, cell = .data$cell + (d - 1L) * cell_offset)
   }) |>
     purrr::list_rbind()
 
-  run <- .run_engine(batch_cells, batch_events, coupling, ve, max_doses = 8L)
-  values <- .monthly_values(panel, batch_cells, run$steps, geography) |>
+  run <- .run_cohorts(batch_cells, batch_events, coupling, ve, max_doses)
+  values <- .monthly_values(
+    panel, batch_cells, run$units, run$unit_values, geography
+  ) |>
     dplyr::mutate(
       susceptible = .data$susceptible_share * .data$population,
       maternal_protection = .data$age_months < maternal_months
@@ -622,29 +1246,35 @@ immunity_draws <- function(
 }
 
 # internal helper: one draw of coverage for every opportunity. routine draws
-# follow an autocorrelated series by geography and dose; campaigns are drawn
-# record by record
+# follow an autocorrelated series over coverage years by geography and
+# dose; campaigns are drawn once per coverage record. opportunities without
+# an interval keep their coverage
 #' @noRd
 .draw_coverage <- function(events, geography, rho_years, rho_doses) {
   logit <- function(p) stats::qlogis(pmin(pmax(p, 1e-6), 1 - 1e-6))
   events <- events |>
     dplyr::mutate(
-      year = as.integer(format(.data$month, "%Y")),
       centre = logit(.data$coverage),
       spread = (logit(.data$coverage_upper) - logit(.data$coverage_lower)) /
         (2 * stats::qnorm(0.975)),
       spread = dplyr::coalesce(.data$spread, 0)
     )
 
-  # one standard normal per geography and year, shared by MCV1 and MCV2
-  # through rho_doses, and carried between years through rho_years
+  # one standard normal per geography and coverage year, shared by MCV1 and
+  # MCV2 through rho_doses, and carried between years through rho_years per
+  # year elapsed
   routine_z <- events |>
     dplyr::filter(.data$type != "sia") |>
-    dplyr::distinct(dplyr::across(dplyr::all_of(c(geography, "year")))) |>
-    dplyr::arrange(dplyr::across(dplyr::all_of(c(geography, "year")))) |>
+    dplyr::distinct(
+      dplyr::across(dplyr::all_of(c(geography, "coverage_year")))
+    ) |>
+    dplyr::arrange(
+      dplyr::across(dplyr::all_of(c(geography, "coverage_year")))
+    ) |>
     dplyr::mutate(
-      shared = .ar1(stats::rnorm(dplyr::n()), rho_years),
-      own = .ar1(stats::rnorm(dplyr::n()), rho_years),
+      gap = .data$coverage_year - dplyr::lag(.data$coverage_year),
+      shared = .ar1(stats::rnorm(dplyr::n()), rho_years, .data$gap),
+      own = .ar1(stats::rnorm(dplyr::n()), rho_years, .data$gap),
       .by = dplyr::all_of(geography)
     ) |>
     tidyr::expand_grid(type = c("mcv1", "mcv2")) |>
@@ -654,16 +1284,17 @@ immunity_draws <- function(
         rho_doses * .data$shared + sqrt(1 - rho_doses^2) * .data$own
       )
     ) |>
-    dplyr::select(dplyr::all_of(c(geography, "year", "type", "z")))
+    dplyr::select(dplyr::all_of(c(geography, "coverage_year", "type", "z")))
 
   campaign_z <- events |>
     dplyr::filter(.data$type == "sia") |>
-    dplyr::distinct(dplyr::across(dplyr::all_of(c(geography, "event_id")))) |>
+    dplyr::distinct(dplyr::across(dplyr::all_of("record"))) |>
+    dplyr::arrange(.data$record) |>
     dplyr::mutate(z_campaign = stats::rnorm(dplyr::n()))
 
   events |>
-    dplyr::left_join(routine_z, by = c(geography, "year", "type")) |>
-    dplyr::left_join(campaign_z, by = c(geography, "event_id")) |>
+    dplyr::left_join(routine_z, by = c(geography, "coverage_year", "type")) |>
+    dplyr::left_join(campaign_z, by = "record") |>
     dplyr::mutate(
       z = dplyr::coalesce(.data$z, .data$z_campaign, 0),
       coverage = dplyr::if_else(
@@ -672,15 +1303,29 @@ immunity_draws <- function(
         stats::plogis(.data$centre + .data$spread * .data$z)
       )
     ) |>
-    dplyr::select(-"year", -"centre", -"spread", -"z", -"z_campaign")
+    dplyr::select(-"centre", -"spread", -"z", -"z_campaign")
 }
 
-# internal helper: a first-order autoregressive series with unit variance
+# internal helper: a first-order autoregressive series with unit variance.
+# gaps gives the time elapsed before each value (the first is ignored), so
+# the correlation between neighbours is rho^gap
 #' @noRd
-.ar1 <- function(e, rho) {
-  purrr::accumulate(
-    e[-1],
-    \(previous, innovation) rho * previous + sqrt(1 - rho^2) * innovation,
-    .init = e[1]
-  )
+.ar1 <- function(e, rho, gaps = NULL) {
+  if (length(e) == 0) {
+    return(numeric())
+  }
+  steps <- dplyr::tibble(
+    e = e,
+    gap = if (is.null(gaps)) 1 else as.numeric(gaps)
+  ) |>
+    dplyr::slice(-1)
+  purrr::accumulate2(
+    steps$e, steps$gap,
+    \(previous, innovation, gap) {
+      rho^gap * previous + sqrt(1 - rho^(2 * gap)) * innovation
+    },
+    .init = dplyr::first(e),
+    .simplify = FALSE
+  ) |>
+    purrr::list_c(ptype = numeric())
 }

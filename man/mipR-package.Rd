@@ -8,7 +8,7 @@
 \description{
 \if{html}{\figure{logo.png}{options: style='float: right' alt='logo' width='120'}}
 
-Provides a framework for reconstructing and projecting measles population immunity across birth cohorts, age groups, geographical units, and calendar months. The package is designed to integrate routine immunisation coverage, supplementary immunisation activities, and vaccine effectiveness assumptions to support spatiotemporal immunity profiling. Planned capabilities include subnational immunity estimation, uncertainty analysis, and evaluation of alternative vaccination scenarios.
+Provides a framework for reconstructing and projecting measles population immunity across birth cohorts, age groups, geographical units, and calendar months. The package is designed to integrate routine immunisation coverage, supplementary immunisation activities, and vaccine effectiveness assumptions to support spatiotemporal immunity profiling. Includes subnational vaccination-derived immunity estimation, coverage uncertainty analysis, and comparisons with vaccination survey evidence. Infection-acquired immunity and migration are not modelled.
 }
 \author{
 \strong{Maintainer}: Mohamed A. Yusuf \email{moyusuf@who.int} (\href{https://orcid.org/0000-0002-9339-4613}{ORCID})

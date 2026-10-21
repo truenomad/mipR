@@ -107,7 +107,8 @@ get_boundaries <- function(
       country,
       admin_level = paste0("ADM", level),
       latest = latest,
-      dest_path = dest_path
+      dest_path = dest_path,
+      quiet = quiet
     )
     return(.standardise_boundaries(out, level, source, dates = !latest))
   }
@@ -438,14 +439,14 @@ list_boundaries <- function(
   x <- dplyr::mutate(x, !!!country_cols, !!!unit_cols)
 
   dataset_date <- .first_date(meta$dataset_date)
-  cli::cli_alert_success(
+  if (!quiet) cli::cli_alert_success(
     paste0(
       "{iso3} ADM{level}: {nrow(x)} units from OCHA COD-AB ",
       "({meta$title}; dataset date {dataset_date}; ",
       "licence {meta$license_title})"
     )
   )
-  if (!is.null(meta$caveats) && nzchar(meta$caveats)) {
+  if (!quiet && !is.null(meta$caveats) && nzchar(meta$caveats)) {
     cli::cli_alert_info("HDX caveat: {meta$caveats}")
   }
 
@@ -514,7 +515,7 @@ list_boundaries <- function(
   }
   x <- dplyr::mutate(x, !!!country_cols, !!!unit_cols)
 
-  cli::cli_alert_success(
+  if (!quiet) cli::cli_alert_success(
     paste0(
       "{iso3} ADM{level}: {nrow(x)} units from geoBoundaries gbOpen ",
       "(year represented {meta$boundaryYearRepresented}; ",
@@ -583,7 +584,7 @@ gadm_licence <- paste0(
     purrr::list_flatten()
   x <- dplyr::mutate(x, !!!country_cols, !!!unit_cols)
 
-  cli::cli_alert_success(
+  if (!quiet) cli::cli_alert_success(
     "{iso3} ADM{level}: {nrow(x)} units from GADM 4.1 ({gadm_licence})"
   )
 
@@ -663,13 +664,14 @@ who_services <- c(
   country_codes,
   admin_level = "ADM2",
   latest = TRUE,
-  dest_path = NULL
+  dest_path = NULL,
+  quiet = FALSE
 ) {
   # validate admin_level
   admin_level <- toupper(admin_level)
   valid_levels <- c("ADM0", "ADM1", "ADM2")
   if (!admin_level %in% valid_levels) {
-    stop(
+    cli::cli_abort(
       paste0(
         "Invalid admin_level. Must be one of: ",
         paste(valid_levels, collapse = ", ")
@@ -700,7 +702,7 @@ who_services <- c(
       country_codes <- setdiff(country_codes, existing_codes)
 
       if (length(country_codes) == 0) {
-        cli::cli_alert_info(
+        if (!quiet) cli::cli_alert_info(
           paste0(
             "All requested country codes are already in ",
             "{basename(dest_file)}. No updates needed."
@@ -732,7 +734,7 @@ who_services <- c(
   )
 
   codes_label <- paste(country_codes, collapse = ", ")
-  cli::cli_alert_info(
+  if (!quiet) cli::cli_alert_info(
     "Downloading WHO {admin_level} data for: {.val {codes_label}}"
   )
 
@@ -804,9 +806,9 @@ who_services <- c(
         append = TRUE,
         quiet = TRUE
       )
-      cli::cli_alert_success(
+      if (!quiet) cli::cli_alert_success(
         paste0(
-          "Appended missing country codes to existing shapefile ",
+          "Appended missing country codes to existing GeoPackage ",
           "({basename(dest_file)}): {codes_label}"
         )
       )
@@ -818,16 +820,16 @@ who_services <- c(
         append = FALSE,
         quiet = TRUE
       )
-      cli::cli_alert_success(
+      if (!quiet) cli::cli_alert_success(
         paste0(
-          "Created new shapefile ({basename(dest_file)}) with country ",
+          "Created new GeoPackage ({basename(dest_file)}) with country ",
           "codes: {codes_label}"
         )
       )
       return(new_sf)
     }
   } else {
-    cli::cli_alert_success(
+    if (!quiet) cli::cli_alert_success(
       "Downloaded {admin_level} data for: {codes_label}"
     )
     return(new_sf)

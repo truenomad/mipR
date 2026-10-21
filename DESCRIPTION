@@ -9,9 +9,10 @@ Description: Provides a framework for reconstructing and projecting
     geographical units, and calendar months. The package is designed to
     integrate routine immunisation coverage, supplementary immunisation
     activities, and vaccine effectiveness assumptions to support
-    spatiotemporal immunity profiling. Planned capabilities include
-    subnational immunity estimation, uncertainty analysis, and evaluation
-    of alternative vaccination scenarios.
+    spatiotemporal immunity profiling. Includes subnational
+    vaccination-derived immunity estimation, coverage uncertainty analysis,
+    and comparisons with vaccination survey evidence. Infection-acquired
+    immunity and migration are not modelled.
 License: MIT + file LICENSE
 Depends: 
     R (>= 4.1.0)
@@ -19,17 +20,17 @@ Imports:
     cli,
     countrycode,
     curl,
-    dplyr,
+    dplyr (>= 1.1.1),
     exactextractr,
     grDevices,
-    httr2 (>= 1.0.0),
+    httr2 (>= 1.1.1),
     openssl,
-    purrr,
+    purrr (>= 1.0.1),
     readxl,
     sf,
     stats,
     terra,
-    tidyr,
+    tidyr (>= 1.3.0),
     tools,
     utils
 Suggests: 

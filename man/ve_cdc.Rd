@@ -13,9 +13,10 @@ ve_cdc(
 }
 \arguments{
 \item{mcv1, mcv2, sia}{Effectiveness by age band for each dose type, with
-age bands set by \code{breaks}.}
+age bands set by \code{breaks}. A single value applies to every band.}
 
-\item{breaks}{Lower bounds of the age bands in months.}
+\item{breaks}{Lower bounds of the age bands in months, strictly
+increasing. Ages below the first break use the first band.}
 }
 \value{
 A list with \code{breaks} and the effectiveness for \code{mcv1}, \code{mcv2}

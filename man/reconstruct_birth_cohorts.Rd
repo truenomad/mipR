@@ -47,11 +47,12 @@ it from the year. Default \code{"01-01"}, the WorldPop R2025A reference date.}
 \item{mortality}{Data frame with \code{year}, \code{age} (single years) and \code{mx}
 (central death rate), such as \code{get_demog_wpp()$mortality}. Needed for
 \code{"survival"} and \code{"constrained"}. Years outside the table use the
-nearest year.}
+nearest available year, using the earlier year on ties.}
 
 \item{births}{Optional data frame with \code{year} and \code{births}, such as
 \code{get_demog_wpp()$rates}, giving the national trend used to extend
-cohorts past the last anchor.}
+cohorts past the last anchor. Values must be positive and finite;
+missing years use the nearest available year (earlier on ties).}
 
 \item{seasonality}{Optional numeric vector of 12 relative birth
 frequencies, January to December. Default \code{NULL}, births spread evenly
@@ -59,7 +60,8 @@ over the days of the year.}
 
 \item{tolerance}{Relative difference allowed between an anchor and the
 population rebuilt from the cohorts. Used by \code{"constrained"} and to flag
-anchors in \code{anchor_check}. Default \code{0.05}.}
+anchors in \code{anchor_check}. Default \code{0.05}. Must be positive for
+\code{"constrained"}; zero is allowed for the other methods.}
 
 \item{start, end}{First and last calendar month of the output, as Dates or
 \code{"YYYY-MM"}. Default: the earliest birth month covered by the anchors,
@@ -95,8 +97,9 @@ consistent across years. Each estimate (a geography, year and age) is an
 anchor for the cohorts it covers.
 }
 \details{
-\strong{Anchors.} People aged \code{a} years at a reference date were born in the
-12 months before their \code{a}-th birthday. For example, people aged 0 on 1
+\strong{Anchors.} The birth window for age \code{a} completed years runs from the
+reference date minus \code{a + 1} years (inclusive) to the reference date
+minus \code{a} years (exclusive). For example, people aged 0 on 1
 January 2025 were born from 1 January to 31 December 2024. Each anchor is
 shared out across the birth months in that window by day of birth,
 weighted by \code{seasonality} when given and, for the \code{survival} and
@@ -126,10 +129,12 @@ outside the tolerance are flagged in \code{anchor_check}.
 \strong{Survival.} Monthly survival comes from \code{mortality}, single-age central
 death rates by calendar year. From age 1 the monthly survival is
 \code{exp(-mx / 12)}. In the first year, the infant death probability is
-derived from \code{mx} at age 0 with the Coale-Demeny separation factor, half
-of infant deaths fall in the first month of life, and the rest are spread
-evenly over the remaining 11 months. Mortality is national, so every
-geography uses the same survival.
+derived from \code{mx} at age 0 with a Coale-Demeny-style separation factor:
+\code{a0 = 0.34} when \code{mx >= 0.107}, otherwise \code{a0 = 0.049 + 2.742 * mx}.
+Half of infant deaths are assigned to the first month; conditional
+monthly survival is constant over the remaining 11 months. These are
+modelling assumptions, not measured monthly mortality. Mortality is
+national, so every geography uses the same survival.
 
 \strong{Cohorts after the last anchor.} With \code{survival} or \code{constrained},
 cohorts born after a geography's last anchored birth month and up to

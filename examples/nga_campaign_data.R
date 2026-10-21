@@ -38,7 +38,7 @@ non_state_labels <- c(
 # Helpers ----------------------------------------------------------------------
 ## ---------------------------------------------------------------------------##
 
-download_source <- function(url, path) {
+.download_source <- function(url, path) {
   if (!file.exists(path)) {
     httr2::request(url) |>
       httr2::req_user_agent("Mozilla/5.0") |>
@@ -48,65 +48,93 @@ download_source <- function(url, path) {
   path
 }
 
-read_report <- function(path) {
+.read_report <- function(path) {
   pdftools::pdf_text(path) |>
-    strsplit("\n") |>
-    unlist()
+    stringr::str_split("\n") |>
+    purrr::list_c()
 }
 
 # lines of a report table, from its title to the first line that ends it;
 # the last title match is used, since the list of tables comes first
-table_lines <- function(report_lines, title) {
-  is_title <- stringr::str_starts(
-    stringr::str_trim(report_lines), stringr::fixed(title)
-  )
-  start <- utils::tail(which(is_title), 1)
-
-  is_end <- stringr::str_detect(
-    report_lines,
-    paste0(
-      "^\\s*(Abbreviations|The results in this table|Table [0-9]|",
-      "Figure [0-9]|[0-9]+\\.[0-9]+\\.[0-9]+ )"
-    )
-  )
-  end <- which(is_end & seq_along(report_lines) > start)[1] - 1
-
-  report_lines[start:end]
+.table_lines <- function(report_lines, title) {
+  lines <- tibble::tibble(line = report_lines, row = seq_along(report_lines))
+  start <- lines |>
+    dplyr::filter(stringr::str_starts(
+      stringr::str_trim(.data$line), stringr::fixed(title)
+    )) |>
+    dplyr::slice_tail(n = 1) |>
+    dplyr::pull("row")
+  if (length(start) == 0) {
+    cli::cli_abort("Table {.val {title}} not found in the report.")
+  }
+  ending <- lines |>
+    dplyr::filter(
+      .data$row > start,
+      stringr::str_detect(
+        .data$line,
+        paste0(
+          "^\\s*(Abbreviations|The results in this table|Table [0-9]|",
+          "Figure [0-9]|[0-9]+\\.[0-9]+\\.[0-9]+ )"
+        )
+      )
+    ) |>
+    dplyr::slice_head(n = 1) |>
+    dplyr::pull("row")
+  end <- if (length(ending) == 0) nrow(lines) + 1L else ending
+  lines |>
+    dplyr::filter(.data$row >= start, .data$row < end) |>
+    dplyr::pull("line")
 }
 
-# rows of a state table, with the numbers in `cols` order and the first
-# "(lower, upper)" pair as the confidence interval
-parse_state_rows <- function(lines, cols, exact = TRUE) {
-  rows <- stringr::str_match(
-    lines, "^\\s*([A-Za-z][A-Za-z ,.'-]*[A-Za-z])\\s{2,}([0-9(].*)$"
-  )
-  rows <- rows[!is.na(rows[, 1]), , drop = FALSE]
+# Parse named report fields directly into a tibble.
+.report_fields <- function(text, pattern, columns) {
+  stringr::str_match(text, pattern) |>
+    tibble::as_tibble(.name_repair = \(names) c("matched", columns))
+}
 
-  ci <- stringr::str_match(rows[, 3], "\\(([0-9.]+), ([0-9.]+)\\)")
-
-  values <- rows[, 3] |>
-    stringr::str_remove_all("\\([^)]*\\)|%") |>
-    stringr::str_extract_all("[0-9][0-9,]*(\\.[0-9]+)?")
-
-  keep <- if (exact) {
-    lengths(values) == length(cols)
-  } else {
-    lengths(values) >= length(cols)
-  }
-
-  value_matrix <- values[keep] |>
-    purrr::map(\(x) as.numeric(gsub(",", "", x[seq_along(cols)]))) |>
-    do.call(what = rbind)
-  colnames(value_matrix) <- cols
-
-  tibble::tibble(
-    adm1_raw = stringr::str_squish(rows[keep, 2]),
-    ci_lower = as.numeric(ci[keep, 2]),
-    ci_upper = as.numeric(ci[keep, 3])
+# Rows of a state table; confidence bounds are optional.
+.parse_state_rows <- function(lines, cols, exact = TRUE) {
+  rows <- .report_fields(
+    lines, "^\\s*([A-Za-z][A-Za-z ,.'-]*[A-Za-z])\\s{2,}([0-9(].*)$",
+    c("adm1_raw", "numbers")
   ) |>
-    dplyr::bind_cols(tibble::as_tibble(value_matrix)) |>
-    dplyr::filter(!toupper(adm1_raw) %in% non_state_labels) |>
-    dplyr::distinct(adm1_raw, .keep_all = TRUE)
+    dplyr::filter(!is.na(.data$matched)) |>
+    dplyr::mutate(
+      values = .data$numbers |>
+        stringr::str_remove_all("\\([^)]*\\)|%") |>
+        stringr::str_extract_all("[0-9][0-9,]*(\\.[0-9]+)?"),
+      count = lengths(.data$values)
+    ) |>
+    dplyr::filter(
+      if (exact) .data$count == length(cols) else .data$count >= length(cols)
+    )
+  if (nrow(rows) == 0) {
+    cli::cli_abort("No state rows matched the expected report columns.")
+  }
+  bounds <- .report_fields(
+    rows$numbers, "\\(([0-9.]+), ([0-9.]+)\\)",
+    c("ci_lower", "ci_upper")
+  ) |>
+    dplyr::transmute(
+      ci_lower = as.numeric(.data$ci_lower),
+      ci_upper = as.numeric(.data$ci_upper)
+    )
+  values <- rows$values |>
+    purrr::map(\(values) {
+      tibble::tibble(value = values) |>
+        dplyr::slice_head(n = length(cols)) |>
+        dplyr::mutate(
+          name = cols,
+          value = as.numeric(stringr::str_remove_all(.data$value, ","))
+        ) |>
+        tidyr::pivot_wider(names_from = "name", values_from = "value")
+    }) |>
+    purrr::list_rbind()
+  rows |>
+    dplyr::transmute(adm1_raw = stringr::str_squish(.data$adm1_raw)) |>
+    dplyr::bind_cols(bounds, values) |>
+    dplyr::filter(!toupper(.data$adm1_raw) %in% non_state_labels) |>
+    dplyr::distinct(.data$adm1_raw, .keep_all = TRUE)
 }
 
 ## ---------------------------------------------------------------------------##
@@ -127,20 +155,20 @@ shp <- mipR::get_boundaries(
 dir.create(raw_dir, recursive = TRUE, showWarnings = FALSE)
 
 paths <- purrr::map2_chr(
-  sources$url, file.path(raw_dir, sources$file), download_source
+  sources$url, file.path(raw_dir, sources$file), .download_source
 ) |>
   stats::setNames(sources$key)
 
-pmccs <- read_report(paths[["pmccs"]])
-ipccs <- read_report(paths[["ipccs"]])
-ncdc <- read_report(paths[["ncdc"]])
+pmccs <- .read_report(paths[["pmccs"]])
+ipccs <- .read_report(paths[["ipccs"]])
+ncdc <- .read_report(paths[["ncdc"]])
 
 ## ---------------------------------------------------------------------------##
 # 2017-2018 post measles campaign coverage survey ------------------------------
 ## ---------------------------------------------------------------------------##
 
-pmccs_prior <- table_lines(pmccs, "Table 2.4a:") |>
-  parse_state_rows(
+pmccs_prior <- .table_lines(pmccs, "Table 2.4a:") |>
+  .parse_state_rows(
     c(
       "card_pct", "recall_pct", "no_pct", "unknown_pct", "value_pct", "n",
       "weighted_n"
@@ -148,18 +176,18 @@ pmccs_prior <- table_lines(pmccs, "Table 2.4a:") |>
   ) |>
   dplyr::mutate(indicator = "mcv_before_sia")
 
-pmccs_coverage <- table_lines(pmccs, "2.5a:") |>
-  parse_state_rows(
+pmccs_coverage <- .table_lines(pmccs, "2.5a:") |>
+  .parse_state_rows(
     c("card_pct", "recall_pct", "finger_pct", "value_pct", "n", "weighted_n")
   ) |>
   dplyr::mutate(indicator = "sia_coverage")
 
-pmccs_first_dose <- table_lines(pmccs, "Table 2.6a:") |>
-  parse_state_rows(c("value_pct", "n", "weighted_n")) |>
+pmccs_first_dose <- .table_lines(pmccs, "Table 2.6a:") |>
+  .parse_state_rows(c("value_pct", "n", "weighted_n")) |>
   dplyr::mutate(indicator = "sia_first_dose")
 
-pmccs_lifetime <- table_lines(pmccs, "Table 2.8b") |>
-  parse_state_rows(
+pmccs_lifetime <- .table_lines(pmccs, "Table 2.8b") |>
+  .parse_state_rows(
     c("mcv_0_dose", "mcv_1_dose", "mcv_2plus_dose", "n", "weighted_n")
   ) |>
   tidyr::pivot_longer(
@@ -192,17 +220,17 @@ ipccs_cols <- c(
   "weighted_n"
 )
 
-ipccs_coverage <- table_lines(ipccs, "Table 4.5:") |>
-  parse_state_rows(c("card_pct", "history_pct", "finger_pct", ipccs_cols)) |>
+ipccs_coverage <- .table_lines(ipccs, "Table 4.5:") |>
+  .parse_state_rows(c("card_pct", "history_pct", "finger_pct", ipccs_cols)) |>
   dplyr::mutate(indicator = "sia_coverage")
 
-ipccs_first_dose <- table_lines(ipccs, "Table 4.6:") |>
-  parse_state_rows(ipccs_cols) |>
+ipccs_first_dose <- .table_lines(ipccs, "Table 4.6:") |>
+  .parse_state_rows(ipccs_cols) |>
   dplyr::mutate(indicator = "sia_first_dose")
 
 # the first four columns cover all ages; the rest split them by birth cohort
-ipccs_lifetime <- table_lines(ipccs, "Table 4.7:") |>
-  parse_state_rows(
+ipccs_lifetime <- .table_lines(ipccs, "Table 4.7:") |>
+  .parse_state_rows(
     c("mcv_0_dose", "mcv_1_dose", "mcv_2plus_dose", "n"),
     exact = FALSE
   ) |>
@@ -252,37 +280,41 @@ pmccs_calendar <- pmccs_survey |>
 # 2024 campaign dates by state -------------------------------------------------
 ## ---------------------------------------------------------------------------##
 
-calendar <- table_lines(ipccs, "Table 1.1:") |>
-  stringr::str_match("^\\s*[0-9]+\\.\\s+(.+?)\\s{2,}(.+[0-9]{4})\\s*$")
-calendar <- calendar[!is.na(calendar[, 1]), , drop = FALSE]
+calendar <- .table_lines(ipccs, "Table 1.1:") |>
+  .report_fields(
+    "^\\s*[0-9]+\\.\\s+(.+?)\\s{2,}(.+[0-9]{4})\\s*$",
+    c("adm1_raw", "dates")
+  ) |>
+  dplyr::filter(!is.na(.data$matched))
 
-campaign_dates <- calendar[, 3] |>
-  stringr::str_match(
-    paste0(
-      "([0-9]+)[a-z]{2}\\s*([A-Za-z]{3})?\\s+to\\s+([0-9]+)[a-z]{2}\\s+",
-      "([A-Za-z]{3})\\s+([0-9]{4})"
-    )
-  )
-
-sia_calendar <- tibble::tibble(
-  campaign_id = campaign_ipccs,
-  adm1_raw = stringr::str_squish(calendar[, 2]),
-  start_date = as.Date(
-    paste(
-      campaign_dates[, 2],
-      dplyr::coalesce(campaign_dates[, 3], campaign_dates[, 5]),
-      campaign_dates[, 6]
-    ),
-    format = "%d %b %Y"
+campaign_dates <- .report_fields(
+  calendar$dates,
+  paste0(
+    "([0-9]+)[a-z]{2}\\s*([A-Za-z]{3})?\\s+to\\s+([0-9]+)[a-z]{2}\\s+",
+    "([A-Za-z]{3})\\s+([0-9]{4})"
   ),
-  end_date = as.Date(
-    paste(campaign_dates[, 4], campaign_dates[, 5], campaign_dates[, 6]),
-    format = "%d %b %Y"
-  ),
-  target_age = "9-59 months",
-  source = "IPCCS 2024 report, Table 1.1",
-  note = NA_character_
+  c("start_day", "start_month", "end_day", "end_month", "year")
 )
+
+sia_calendar <- campaign_dates |>
+  dplyr::mutate(adm1_raw = stringr::str_squish(calendar$adm1_raw)) |>
+  dplyr::transmute(
+    campaign_id = campaign_ipccs,
+    .data$adm1_raw,
+    start_date = as.Date(
+      paste(
+        .data$start_day,
+        dplyr::coalesce(.data$start_month, .data$end_month), .data$year
+      ),
+      format = "%d %b %Y"
+    ),
+    end_date = as.Date(
+      paste(.data$end_day, .data$end_month, .data$year), format = "%d %b %Y"
+    ),
+    target_age = "9-59 months",
+    source = "IPCCS 2024 report, Table 1.1",
+    note = NA_character_
+  )
 
 sia_calendar <- dplyr::bind_rows(pmccs_calendar, sia_calendar)
 
@@ -291,8 +323,8 @@ sia_calendar <- dplyr::bind_rows(pmccs_calendar, sia_calendar)
 ## ---------------------------------------------------------------------------##
 
 # cumulative from January to the end of October 2024
-measles_cases <- table_lines(ncdc, "Table 1:") |>
-  parse_state_rows(
+measles_cases <- .table_lines(ncdc, "Table 1:") |>
+  .parse_state_rows(
     c(
       "suspected", "confirmed", "lab_confirmed", "epi_linked",
       "clinically_compatible", "confirmed_9_59m_pct", "confirmed_zero_dose_pct"
@@ -330,7 +362,7 @@ adm1_names <- sntutils::prep_geonames(
 ) |>
   dplyr::left_join(adm1_lookup, by = c("adm0", "adm1"))
 
-add_adm1 <- function(df) {
+.add_adm1 <- function(df) {
   df |>
     dplyr::left_join(adm1_names, by = "adm1_raw") |>
     dplyr::relocate(adm0, adm1, adm1_code, .after = adm1_raw) |>
@@ -338,11 +370,11 @@ add_adm1 <- function(df) {
 }
 
 sia_survey <- dplyr::bind_rows(pmccs_survey, ipccs_survey) |>
-  add_adm1()
+  .add_adm1()
 
-sia_calendar <- add_adm1(sia_calendar)
+sia_calendar <- .add_adm1(sia_calendar)
 
-measles_cases <- add_adm1(measles_cases)
+measles_cases <- .add_adm1(measles_cases)
 
 ## ---------------------------------------------------------------------------##
 # Campaign records -------------------------------------------------------------

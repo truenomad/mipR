@@ -17,33 +17,53 @@ A list:
 \describe{
 \item{comparison}{One row per geography, campaign, survey and
 indicator: \code{survey_value}, \code{survey_lower}, \code{survey_upper},
-\code{model_value}, \code{difference} and \code{within_interval}}
+\code{model_value}, \code{denominator} (the weighted population behind the
+model value), \code{difference} and \code{within_interval}}
 \item{summary}{One row per campaign and indicator: number of areas,
 mean difference, mean absolute difference and share within the
 survey interval}
+\item{diagnostics}{Campaigns and geographies that could not be
+compared, with the reason}
 }
 }
 \description{
 Compares the vaccination histories estimated by \code{\link[=estimate_immunity]{estimate_immunity()}}
 with post-campaign survey results kept by \code{\link[=prepare_campaigns]{prepare_campaigns()}}: the
 distribution of lifetime doses, vaccination before the campaign, and the
-share of children who received their first dose in the campaign.
+share of children whose first dose came from the campaign.
 }
 \details{
-For each survey indicator, the model value is taken over the campaign's
-target ages and geography, weighted by population:
+\strong{Denominator.} For each campaign and geography, the comparison covers
+the campaign's target cohorts: the birth months with children in the
+target ages at some time during the campaign, taken from the engine's
+\code{campaign_targets}. Every indicator uses the same denominator, each
+cohort's population in the month after the campaign weighted by its
+eligible share, so the indicators of one campaign are comparable with
+each other. Dose shares are those of the eligible children themselves,
+from the exact birth-day states, so children of a partly targeted cohort
+who were outside the target ages do not enter the numerator or the
+denominator.
+
+\strong{Indicators.}
 \itemize{
 \item \code{mcv_0_dose}, \code{mcv_1_dose} and \code{mcv_2plus_dose}: shares with no, one,
-and two or more doses in the month after the campaign ends.
-\item \code{mcv_before_sia}: share with at least one dose in the month before the
-campaign starts.
-\item \code{sia_first_dose}: share with no dose before the campaign that has one
-after it.
+and two or more doses on the 15th of the month after the campaign ends.
+\item \code{mcv_before_sia}: share with at least one dose on the 15th of the
+month before the campaign starts.
+\item \code{sia_first_dose}: share of the target children whose first ever dose
+was given by this campaign, from the campaign's own contribution in
+\code{opportunities}. Routine doses and other campaigns in the same months
+do not count. The matching survey indicator is the share of surveyed
+target children reporting their first measles dose in the campaign;
+both are shares of all target children, not of the unvaccinated.
 }
 
-Large differences point to the dose-overlap rule (\code{coupling}), coverage
-inputs or vaccine effectiveness, and are the basis for choosing between
-them.
+A campaign whose after month has no population in \code{immunity} is listed
+in \code{diagnostics} and left out, as is one with no target cohorts; no value
+is filled in. Differences between model and survey point to the coverage
+inputs and the dose-overlap rule (\code{coupling}). They do not identify
+vaccine effectiveness: dose counts do not depend on it, and the survey
+indicators compared here are about doses, not protection.
 }
 \examples{
 \dontrun{

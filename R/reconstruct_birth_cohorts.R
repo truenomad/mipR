@@ -8,8 +8,9 @@
 #' anchor for the cohorts it covers.
 #'
 #' @details
-#' **Anchors.** People aged `a` years at a reference date were born in the
-#' 12 months before their `a`-th birthday. For example, people aged 0 on 1
+#' **Anchors.** The birth window for age `a` completed years runs from the
+#' reference date minus `a + 1` years (inclusive) to the reference date
+#' minus `a` years (exclusive). For example, people aged 0 on 1
 #' January 2025 were born from 1 January to 31 December 2024. Each anchor is
 #' shared out across the birth months in that window by day of birth,
 #' weighted by `seasonality` when given and, for the `survival` and
@@ -37,10 +38,12 @@
 #' **Survival.** Monthly survival comes from `mortality`, single-age central
 #' death rates by calendar year. From age 1 the monthly survival is
 #' `exp(-mx / 12)`. In the first year, the infant death probability is
-#' derived from `mx` at age 0 with the Coale-Demeny separation factor, half
-#' of infant deaths fall in the first month of life, and the rest are spread
-#' evenly over the remaining 11 months. Mortality is national, so every
-#' geography uses the same survival.
+#' derived from `mx` at age 0 with a Coale-Demeny-style separation factor:
+#' `a0 = 0.34` when `mx >= 0.107`, otherwise `a0 = 0.049 + 2.742 * mx`.
+#' Half of infant deaths are assigned to the first month; conditional
+#' monthly survival is constant over the remaining 11 months. These are
+#' modelling assumptions, not measured monthly mortality. Mortality is
+#' national, so every geography uses the same survival.
 #'
 #' **Cohorts after the last anchor.** With `survival` or `constrained`,
 #' cohorts born after a geography's last anchored birth month and up to
@@ -75,16 +78,18 @@
 #' @param mortality Data frame with `year`, `age` (single years) and `mx`
 #'   (central death rate), such as `get_demog_wpp()$mortality`. Needed for
 #'   `"survival"` and `"constrained"`. Years outside the table use the
-#'   nearest year.
+#'   nearest available year, using the earlier year on ties.
 #' @param births Optional data frame with `year` and `births`, such as
 #'   `get_demog_wpp()$rates`, giving the national trend used to extend
-#'   cohorts past the last anchor.
+#'   cohorts past the last anchor. Values must be positive and finite;
+#'   missing years use the nearest available year (earlier on ties).
 #' @param seasonality Optional numeric vector of 12 relative birth
 #'   frequencies, January to December. Default `NULL`, births spread evenly
 #'   over the days of the year.
 #' @param tolerance Relative difference allowed between an anchor and the
 #'   population rebuilt from the cohorts. Used by `"constrained"` and to flag
-#'   anchors in `anchor_check`. Default `0.05`.
+#'   anchors in `anchor_check`. Default `0.05`. Must be positive for
+#'   `"constrained"`; zero is allowed for the other methods.
 #' @param start,end First and last calendar month of the output, as Dates or
 #'   `"YYYY-MM"`. Default: the earliest birth month covered by the anchors,
 #'   and the month of the latest anchor date.
@@ -156,9 +161,25 @@ reconstruct_birth_cohorts <- function(
     ))
   }
   season <- .check_seasonality(seasonality)
-  if (!is.numeric(tolerance) || length(tolerance) != 1 || tolerance < 0) {
-    cli::cli_abort("{.arg tolerance} must be a single number, 0 or more.")
+  if (!is.numeric(tolerance) || length(tolerance) != 1 ||
+      !is.finite(tolerance) || tolerance < 0) {
+    cli::cli_abort("{.arg tolerance} must be a finite number, 0 or more.")
   }
+  if (method == "constrained" && tolerance == 0) {
+    cli::cli_abort(
+      "{.arg tolerance} must be positive for {.val constrained} fitting."
+    )
+  }
+  if (length(max_age_months) != 1 || !is.numeric(max_age_months) ||
+      !is.finite(max_age_months) || max_age_months < 0 ||
+      max_age_months %% 1 != 0) {
+    cli::cli_abort("{.arg max_age_months} must be a non-negative integer.")
+  }
+  purrr::iwalk(list(start = start, end = end), \(date, argument) {
+    if (!is.null(date) && length(date) != 1) {
+      cli::cli_abort("{.arg {argument}} must specify a single month.")
+    }
+  })
 
   anchors <- .make_anchors(data, geography, year, age, population, ref_date) |>
     .check_anchors()
@@ -286,6 +307,13 @@ reconstruct_birth_cohorts <- function(
 # age in completed months (upper bound exclusive) and an exact reference date
 #' @noRd
 .make_anchors <- function(data, geography, year, age, population, ref_date) {
+  if (!is.data.frame(data) || nrow(data) == 0) {
+    cli::cli_abort("{.arg data} must be a non-empty data frame.")
+  }
+  if (!is.character(geography) || length(geography) == 0 ||
+      anyNA(geography) || anyDuplicated(geography)) {
+    cli::cli_abort("{.arg geography} must name distinct geography columns.")
+  }
   needed <- c(geography, year, age, population)
   missing_cols <- setdiff(needed, names(data))
   if (length(missing_cols) > 0) {
@@ -307,12 +335,16 @@ reconstruct_birth_cohorts <- function(
   }
 
   ages <- data[[age]]
-  if (!is.numeric(ages) || any(is.na(ages) | ages < 0 | ages %% 1 != 0)) {
+  if (!is.numeric(ages) ||
+      any(!is.finite(ages) | ages < 0 | ages %% 1 != 0)) {
     cli::cli_abort("{.arg age} must hold whole years of age, 0 or more.")
   }
 
   # take the values out first so argument names cannot mask columns
   anchor_dates <- .as_date(paste0(data[[year]], "-", ref_values), "ref_date")
+  if (!is.numeric(data[[population]])) {
+    cli::cli_abort("{.arg population} must identify a numeric column.")
+  }
   anchor_pop <- as.numeric(data[[population]])
 
   # a new table of the geography columns, without the input's attributes
@@ -330,8 +362,15 @@ reconstruct_birth_cohorts <- function(
 # internal helper: check anchor populations
 #' @noRd
 .check_anchors <- function(anchors) {
-  if (any(is.na(anchors$population) | anchors$population < 0)) {
-    cli::cli_abort("{.arg population} must be zero or more, without NA.")
+  if (any(!is.finite(anchors$population) | anchors$population < 0)) {
+    cli::cli_abort("{.arg population} must be finite and zero or more.")
+  }
+  keys <- setdiff(names(anchors), "population")
+  if (anyNA(dplyr::select(anchors, dplyr::all_of(keys)))) {
+    cli::cli_abort("Anchor geography, dates and ages must not be missing.")
+  }
+  if (anyDuplicated(dplyr::select(anchors, dplyr::all_of(keys)))) {
+    cli::cli_abort("Duplicate population anchors for geography, date and age.")
   }
   anchors
 }
@@ -343,7 +382,8 @@ reconstruct_birth_cohorts <- function(
     return(rep(1, 12))
   }
   if (!is.numeric(seasonality) || length(seasonality) != 12 ||
-        anyNA(seasonality) || any(seasonality < 0) || sum(seasonality) == 0) {
+        any(!is.finite(seasonality)) || any(seasonality < 0) ||
+        !is.finite(sum(seasonality)) || sum(seasonality) == 0) {
     cli::cli_abort(
       "{.arg seasonality} must be 12 non-negative numbers, January first."
     )
@@ -398,7 +438,7 @@ reconstruct_birth_cohorts <- function(
 # population in the piece; cohort_size scales it to the whole birth month
 #' @noRd
 .share_anchors <- function(pieces, season) {
-  pieces |>
+  weighted <- pieces |>
     dplyr::mutate(
       weight = .data$overlap * .season_at(season, .data$birth_index) *
         .data$survival
@@ -406,7 +446,13 @@ reconstruct_birth_cohorts <- function(
     dplyr::mutate(
       dplyr::across("weight", sum, .names = "total"),
       .by = ".anchor"
-    ) |>
+    )
+  if (any(weighted$total <= 0 & weighted$anchor_population > 0)) {
+    cli::cli_abort(
+      "Positive anchors need positive seasonal survival exposure."
+    )
+  }
+  weighted |>
     dplyr::mutate(
       count = dplyr::if_else(
         .data$total > 0,
@@ -468,7 +514,7 @@ reconstruct_birth_cohorts <- function(
 # keeping a single solution
 #' @noRd
 .constrain_births <- function(births, pieces, tolerance, max_iter = 100L) {
-  band <- log(1 + tolerance)
+  band <- log1p(tolerance)
   fit <- pieces |>
     .implied_births() |>
     dplyr::left_join(births, by = c(".key", "birth_index")) |>
@@ -478,6 +524,7 @@ reconstruct_birth_cohorts <- function(
       .data$birth_index,
       .data$overlap,
       .data$births,
+      structural_zero = .data$births == 0,
       log_implied = log(pmax(.data$implied, 1e-9)),
       share = .data$survival * .data$overlap / .data$days,
       target = .data$anchor_population
@@ -529,7 +576,11 @@ reconstruct_birth_cohorts <- function(
       .by = c(".key", "birth_index")
     ) |>
     dplyr::mutate(
-      updated = exp(.data$w_log_sum / pmax(.data$w_sum, 1e-12))
+      updated = dplyr::case_when(
+        .data$structural_zero ~ 0,
+        .data$w_sum > 0 ~ exp(.data$w_log_sum / .data$w_sum),
+        .default = .data$births
+      )
     ) |>
     dplyr::select(
       -"contribution", -"rebuilt", -"error", -"w", -"w_log",
@@ -558,16 +609,13 @@ reconstruct_birth_cohorts <- function(
     dplyr::inner_join(last_anchored, by = ".key") |>
     dplyr::filter(.data$birth_index > .data$last - 12L) |>
     dplyr::mutate(
-      per_day = .data$births / (
-        .season_at(season, .data$birth_index) *
-          .days_in_month(.data$birth_index)
-      ),
+      exposure = .season_at(season, .data$birth_index) *
+        .days_in_month(.data$birth_index),
       national_births = .national_births(national, .data$birth_index)
     ) |>
     dplyr::summarise(
-      dplyr::across(
-        c("per_day", "national_births"), mean, .names = "base_{.col}"
-      ),
+      base_per_day = sum(.data$births) / sum(.data$exposure),
+      base_national_births = mean(.data$national_births),
       .by = c(".key", "last")
     )
 
@@ -593,9 +641,19 @@ reconstruct_birth_cohorts <- function(
   if (is.null(national)) {
     return(rep(1, length(index)))
   }
-  if (!all(c("year", "births") %in% names(national))) {
+  if (!is.data.frame(national) ||
+      !all(c("year", "births") %in% names(national))) {
     cli::cli_abort(
       "{.arg births} must have columns {.val year} and {.val births}."
+    )
+  }
+  if (nrow(national) == 0 || !is.numeric(national$year) ||
+      !is.numeric(national$births) || any(!is.finite(national$year)) ||
+      any(national$year %% 1 != 0) ||
+      any(!is.finite(national$births) | national$births <= 0) ||
+      anyDuplicated(national$year)) {
+    cli::cli_abort(
+      "{.arg births} needs unique integer years and positive finite births."
     )
   }
   by_year <- national |>
@@ -603,10 +661,26 @@ reconstruct_birth_cohorts <- function(
     dplyr::select("year", "births")
 
   dplyr::tibble(
-    year = pmin(pmax(index %/% 12L, min(national$year)), max(national$year))
+    year = .nearest_demographic_year(index %/% 12L, national$year)
   ) |>
     dplyr::left_join(by_year, by = "year") |>
     dplyr::pull("births")
+}
+
+# internal helper: nearest observed year, resolving ties towards the earlier
+# year. compute each requested year once, even for a large cohort panel
+#' @noRd
+.nearest_demographic_year <- function(year, available) {
+  available <- sort(unique(available))
+  lookup <- dplyr::tibble(year = unique(year)) |>
+    dplyr::mutate(
+      used = purrr::map_dbl(
+        .data$year, \(yr) .closest_year(available, yr)
+      )
+    )
+  dplyr::tibble(year = year) |>
+    dplyr::left_join(lookup, by = "year") |>
+    dplyr::pull("used")
 }
 
 # internal helper: monthly survival from birth, one row per birth month and
@@ -619,11 +693,24 @@ reconstruct_birth_cohorts <- function(
       "{.arg mortality} must be a data frame with {.val {needed}}."
     )
   }
-  if (anyNA(mortality$mx) || any(mortality$mx < 0)) {
-    cli::cli_abort("{.arg mortality} {.val mx} must be 0 or more, without NA.")
+  if (nrow(mortality) == 0 ||
+      !all(purrr::map_lgl(
+        dplyr::select(mortality, dplyr::all_of(needed)), is.numeric
+      )) ||
+      any(!is.finite(mortality$mx) | mortality$mx < 0) ||
+      any(!is.finite(mortality$year) | mortality$year %% 1 != 0) ||
+      any(!is.finite(mortality$age) | mortality$age < 0 |
+            mortality$age %% 1 != 0)) {
+    cli::cli_abort(
+      "{.arg mortality} needs finite non-negative rates and integer ages."
+    )
   }
 
-  # every single age from 0 for each year; a repeated row uses the last
+  if (anyDuplicated(dplyr::select(mortality, "year", "age"))) {
+    cli::cli_abort("{.arg mortality} has duplicate year and age records.")
+  }
+
+  # every single age from 0 for each year
   rates <- tidyr::expand_grid(
     year = sort(unique(mortality$year)),
     age = 0:max(mortality$age)
@@ -641,8 +728,6 @@ reconstruct_birth_cohorts <- function(
       "{.arg mortality} must have every age from 0 for each year."
     )
   }
-  first_year <- min(rates$year)
-  last_year <- max(rates$year)
   oldest <- max(rates$age)
   infant <- rates |>
     dplyr::filter(.data$age == 0) |>
@@ -655,9 +740,8 @@ reconstruct_birth_cohorts <- function(
   ) |>
     dplyr::filter(.data$birth_index + .data$age_months < last_month) |>
     dplyr::mutate(
-      year = pmin(
-        pmax((.data$birth_index + .data$age_months) %/% 12L, first_year),
-        last_year
+      year = .nearest_demographic_year(
+        (.data$birth_index + .data$age_months) %/% 12L, rates$year
       ),
       rate_age = pmin(.data$age_months %/% 12L, oldest)
     ) |>
@@ -696,12 +780,17 @@ reconstruct_birth_cohorts <- function(
 }
 
 # internal helper: monthly survival in the first year of life. the infant
-# death probability comes from m0 with the Coale-Demeny separation factor;
-# half of infant deaths fall in month 0 and the rest evenly over months 1-11
+# death probability comes from m0 with a Coale-Demeny-style separation
+# factor; half of infant deaths fall in month 0, then survival is constant
 #' @noRd
 .infant_survival <- function(m0, age_months) {
   a0 <- dplyr::if_else(m0 >= 0.107, 0.34, 0.049 + 2.742 * m0)
   q0 <- m0 / (1 + (1 - a0) * m0)
+  if (any(!is.finite(q0) | q0 < 0 | q0 >= 1)) {
+    cli::cli_abort(
+      "Infant mortality implies a death probability outside [0, 1)."
+    )
+  }
   first <- 1 - 0.5 * q0
   first_month <- rep_len(
     age_months == 0L, max(length(m0), length(age_months))
@@ -896,7 +985,7 @@ reconstruct_birth_cohorts <- function(
     } else {
       paste(
         "national mx by single year of age; infant deaths half in month 0",
-        "(Coale-Demeny a0), the rest evenly over months 1-11"
+        "(Coale-Demeny-style a0), then constant conditional survival"
       )
     },
     migration = "not modelled; reported as unexplained cohort change",
@@ -938,9 +1027,9 @@ reconstruct_birth_cohorts <- function(
 #' @param birth_month Birth month of each cohort, as Dates or `"YYYY-MM"`.
 #' @param start Vaccination date, or first day of the campaign.
 #' @param end Last day of the campaign. Defaults to `start`.
-#' @param age_min_months Youngest eligible age in months. Default `0`.
-#' @param age_max_months Age in months at which children stop being
-#'   eligible (exclusive). Default `Inf`.
+#' @param age_min_months Youngest eligible age in whole months. Default `0`.
+#' @param age_max_months Age in whole months at which children stop being
+#'   eligible (exclusive), or `Inf` for no upper limit. Default `Inf`.
 #' @param convention `"fractional"` (default) or `"midmonth"`.
 #'
 #' @return Numeric vector of eligible shares between 0 and 1, one per
@@ -974,9 +1063,19 @@ cohort_eligibility <- function(
       "not before {.arg start}."
     ))
   }
-  if (age_max_months <= age_min_months) {
+  if (!is.numeric(age_min_months) || length(age_min_months) != 1 ||
+      !is.finite(age_min_months) || age_min_months < 0 ||
+      age_min_months %% 1 != 0) {
+    cli::cli_abort("{.arg age_min_months} must be a whole month, 0 or more.")
+  }
+  if (!is.numeric(age_max_months) || length(age_max_months) != 1 ||
+      is.na(age_max_months) || age_max_months <= age_min_months ||
+      (is.finite(age_max_months) && age_max_months %% 1 != 0)) {
     cli::cli_abort(
-      "{.arg age_max_months} must be above {.arg age_min_months}."
+      paste0(
+        "{.arg age_max_months} must be a whole month above ",
+        "{.arg age_min_months}, or Inf."
+      )
     )
   }
 
@@ -1046,6 +1145,9 @@ cohort_eligibility <- function(
 #' @noRd
 .as_date <- function(x, arg = "date") {
   if (inherits(x, "Date")) {
+    if (anyNA(x) || any(!is.finite(as.numeric(x)))) {
+      cli::cli_abort("{.arg {arg}} must contain finite dates without NA.")
+    }
     return(x)
   }
   x <- as.character(x)

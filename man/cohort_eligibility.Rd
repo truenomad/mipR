@@ -20,10 +20,10 @@ cohort_eligibility(
 
 \item{end}{Last day of the campaign. Defaults to \code{start}.}
 
-\item{age_min_months}{Youngest eligible age in months. Default \code{0}.}
+\item{age_min_months}{Youngest eligible age in whole months. Default \code{0}.}
 
-\item{age_max_months}{Age in months at which children stop being
-eligible (exclusive). Default \code{Inf}.}
+\item{age_max_months}{Age in whole months at which children stop being
+eligible (exclusive), or \code{Inf} for no upper limit. Default \code{Inf}.}
 
 \item{convention}{\code{"fractional"} (default) or \code{"midmonth"}.}
 }

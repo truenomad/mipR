@@ -45,7 +45,8 @@ immune population by geography, month and age band.
 \details{
 Shares are weighted by population, so a summary share is the share of
 all children in the group. Infants marked as protected by maternal
-antibodies are left out by default.
+antibodies are left out by default. A group with no population has no
+defined share: its share columns are \code{NA} rather than a number.
 }
 \examples{
 \dontrun{
