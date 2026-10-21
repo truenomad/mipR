@@ -304,7 +304,8 @@ summary_2025 <- mipR::summarise_immunity(
   age_breaks = c(0, 60, 120)
 )
 
-# intervals from the IHME and survey coverage bounds
+# intervals from the IHME and survey coverage bounds; draws run in
+# parallel on the CPU cores less 4
 draws_2025 <- mipR::immunity_draws(
   history, cohorts,
   n_draws = 200, at = "2025-06"

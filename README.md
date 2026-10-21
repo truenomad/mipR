@@ -107,9 +107,11 @@ history <- mipR::build_vaccination_history(
 )
 
 immunity <- mipR::estimate_immunity(history, cohorts, coupling = "dependent")
-summary_2025 <- mipR::summarise_immunity(immunity, at = "2025-06")
+summary_2025 <- mipR::summarise_immunity(
+  immunity, at = "2025-06", age_breaks = c(0, 60, 120)
+)
 
-mipR::map_immunity(summary_2025, shp, type = "bins", ncol = 4)
+mipR::map_immunity(summary_2025, shp, type = "bins", ncol = 3)
 mipR::plot_cohort_journey(
   immunity, birth = "2019-10", at = "2025-06", label = "adm1"
 )
