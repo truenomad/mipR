@@ -142,7 +142,7 @@ testthat::test_that("plot_cohort_journey stacks states and marks doses", {
   testthat::expect_equal(totals$share, rep(1, nrow(totals)))
   testthat::expect_true("MCV1" %in% p$layers[[3]]$data$label)
   testthat::expect_match(
-    levels(area$panel), "^Kano \u00b7 50th percentile \\(\\d+% in Jun 2025\\)$"
+    levels(area$panel), "^Kano \u00b7 50th percentile \\(\\d+%\\)$"
   )
   testthat::expect_error(
     plot_cohort_journey(immunity, birth = "2023-03", at = "2023-01")

@@ -565,7 +565,7 @@ plot_cohort_protection <- function(
 #' Areas are ranked by the cohort's susceptible share in `at`. For each
 #' percentile, the area closest to that percentile of the shares is drawn,
 #' and the panel title gives its name, the percentile and its susceptible
-#' share in the `at` month. Panels run from the lowest to the highest
+#' share in `at`. Panels run from the lowest to the highest
 #' susceptible share.
 #'
 #' Routine doses are always marked. A campaign is marked when it reached at
@@ -587,7 +587,8 @@ plot_cohort_protection <- function(
 #'   Default `75`.
 #' @param ncol Number of panels per row. Default `3`.
 #' @param title,subtitle,caption Plot text. The default caption gives the
-#'   cohort's age in `at` and the arrow rule.
+#'   cohort's age in `at`, the month of the shares in the panel titles and
+#'   the arrow rule.
 #' @param output_file Optional file path to save the plot to. Default
 #'   `NULL`, not saved.
 #' @param width,height Size of the saved plot in inches.
@@ -685,8 +686,7 @@ plot_cohort_journey <- function(
     dplyr::mutate(
       panel = paste0(
         .data[[label]], " \u00b7 ", .ordinal(round(100 * .data$percentile)),
-        " percentile (", round(100 * .data$susceptible_share), "% in ",
-        format(at_month, "%b %Y"), ")"
+        " percentile (", round(100 * .data$susceptible_share), "%)"
       ),
       panel = factor(.data$panel, unique(.data$panel))
     ) |>
@@ -724,6 +724,8 @@ plot_cohort_journey <- function(
       "Born ", format(birth_month, "%b %Y"), ", age ",
       .age_months_text(birth_month, at_month), " in ",
       format(at_month, "%b %Y"), ". Vaccination-derived immunity only.\n",
+      "Panel titles give the share of the cohort susceptible in ",
+      format(at_month, "%b %Y"), ".\n",
       "Arrows: routine doses and campaigns reaching at least ",
       round(100 * min_reach), "% of the cohort."
     )
@@ -904,7 +906,8 @@ plot_cohort_journey <- function(
 #'   [list_palettes()] or a vector of colours. Default `"susceptibility"`.
 #' @param adm1_shp Optional `sf` object of higher-level boundaries drawn as
 #'   outlines.
-#' @param title,subtitle,caption Plot text.
+#' @param title,subtitle,caption Plot text. With panels by age band, the
+#'   default subtitle gives the month of the summary.
 #' @param ncol Number of panels per row. Default `3`.
 #' @param output_file Optional file path to save the plot to. Default
 #'   `NULL`, not saved.
@@ -992,6 +995,13 @@ map_immunity <- function(
     )
   if (nrow(data) == 0) {
     cli::cli_abort("No summary geographies match the boundaries.")
+  }
+
+  # panels by age band give the month of the summary in the subtitle
+  if (is.null(subtitle) && facet == "age_band" && "month" %in% names(data)) {
+    subtitle <- paste(
+      format(sort(unique(data$month)), "%B %Y"), collapse = ", "
+    )
   }
   scale_top <- max(1, pretty(c(0, max(data$susceptible_pct))))
   if (!is.null(limits) &&

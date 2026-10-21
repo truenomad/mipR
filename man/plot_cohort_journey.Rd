@@ -50,7 +50,8 @@ Default \code{75}.}
 \item{ncol}{Number of panels per row. Default \code{3}.}
 
 \item{title, subtitle, caption}{Plot text. The default caption gives the
-cohort's age in \code{at} and the arrow rule.}
+cohort's age in \code{at}, the month of the shares in the panel titles and
+the arrow rule.}
 
 \item{output_file}{Optional file path to save the plot to. Default
 \code{NULL}, not saved.}
@@ -79,7 +80,7 @@ routine doses and the campaigns that reached the cohort.
 Areas are ranked by the cohort's susceptible share in \code{at}. For each
 percentile, the area closest to that percentile of the shares is drawn,
 and the panel title gives its name, the percentile and its susceptible
-share in the \code{at} month. Panels run from the lowest to the highest
+share in \code{at}. Panels run from the lowest to the highest
 susceptible share.
 
 Routine doses are always marked. A campaign is marked when it reached at

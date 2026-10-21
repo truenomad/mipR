@@ -51,7 +51,8 @@ the data.}
 \item{adm1_shp}{Optional \code{sf} object of higher-level boundaries drawn as
 outlines.}
 
-\item{title, subtitle, caption}{Plot text.}
+\item{title, subtitle, caption}{Plot text. With panels by age band, the
+default subtitle gives the month of the summary.}
 
 \item{ncol}{Number of panels per row. Default \code{3}.}
 
