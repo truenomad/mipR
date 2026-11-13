@@ -17,7 +17,8 @@ prepare_campaigns(
 \item{calendar}{Data frame with the \code{geography} columns, \code{campaign_id},
 \code{start_date}, \code{end_date} (Dates, \code{NA} when unknown) and either
 \code{target_age} (text) or \code{age_min_months} and \code{age_max_months} (upper
-bound exclusive). Optional columns \code{source} and \code{note} are kept.}
+bound exclusive). Optional columns \code{source}, \code{note} and \code{coupling}
+are kept.}
 
 \item{evaluation}{Optional survey results in long form, with the
 \code{geography} columns, \code{campaign_id}, \code{indicator}, \code{value_pct}, and
@@ -44,7 +45,8 @@ A list:
 columns, \code{campaign_id}, \code{start_date}, \code{end_date}, \code{target_age},
 \code{age_min_months}, \code{age_max_months}, \code{coverage}, \code{coverage_lower},
 \code{coverage_upper}, \code{coverage_source}, \code{coverage_reference},
-\code{dates_source}, \code{note}, \code{needs_dates} and \code{needs_coverage}}
+\code{dates_source}, \code{note}, \code{needs_dates} and \code{needs_coverage}, and
+\code{coupling} when \code{calendar} has it}
 \item{evaluation}{Survey indicators as proportions: the \code{geography}
 columns, \code{campaign_id}, \code{survey}, \code{indicator}, \code{value}, \code{lower},
 \code{upper} and \code{n}}
@@ -84,6 +86,12 @@ in \code{evaluation} as proportions with their intervals and sample sizes, for
 example first-dose receipt, MCV before the campaign and the distribution
 of lifetime doses. They are kept for calibrating and validating
 assumptions about how campaign doses overlap with earlier doses.
+
+\strong{Coupling.} An optional \code{coupling} column in \code{calendar} sets who each
+campaign reaches first (\code{"dependent"}, \code{"independent"} or
+\code{"complementary"}; \code{NA} keeps the default of \code{\link[=estimate_immunity]{estimate_immunity()}}). It
+is kept in \code{campaigns} and carried into the history by
+\code{\link[=build_vaccination_history]{build_vaccination_history()}}.
 
 \strong{Diagnostics.} Each row is one problem: \code{missing_dates},
 \code{end_before_start}, \code{missing_age}, \code{invalid_age}, \code{missing_coverage},

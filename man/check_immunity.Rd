@@ -47,9 +47,10 @@ denominator.
 \strong{Indicators.}
 \itemize{
 \item \code{mcv_0_dose}, \code{mcv_1_dose} and \code{mcv_2plus_dose}: shares with no, one,
-and two or more doses on the 15th of the month after the campaign ends.
-\item \code{mcv_before_sia}: share with at least one dose on the 15th of the
-month before the campaign starts.
+and two or more doses on the reporting date (the 15th by default, see
+\code{\link[=mip_conventions]{mip_conventions()}}) of the month after the campaign ends.
+\item \code{mcv_before_sia}: share with at least one dose on the reporting date
+of the month before the campaign starts.
 \item \code{sia_first_dose}: share of the target children whose first ever dose
 was given by this campaign, from the campaign's own contribution in
 \code{opportunities}. Routine doses and other campaigns in the same months

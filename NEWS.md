@@ -1,3 +1,24 @@
+# mipR 1.1.0
+
+- Added `mip_conventions()` to choose the date and age rules:
+  how births are placed in the birth month, whether age is calendar age
+  or days divided by `days_per_month`, how routine dose dates are set, the
+  monthly reporting day and whether it is taken before that day's
+  opportunities, and the order of opportunities on the same date. The
+  defaults are the existing rules, so results do not change.
+  `mip_conventions_preset("v2_pipeline")` reproduces the vaccination-only
+  runs of the measles campaign pipeline.
+- `build_vaccination_history()`, `estimate_immunity()`, `immunity_draws()`
+  and `cohort_eligibility()` gain a `conventions` argument. The history
+  stores its conventions, and the estimate uses them unless given its own.
+- `prepare_campaigns()` keeps an optional `coupling` column from the
+  calendar, and `build_vaccination_history()` carries a `coupling` column
+  in `campaigns` into the history.
+- `build_vaccination_history()` gains `repeated_campaigns`. With
+  `"separate"`, several records for one campaign and geography are applied
+  as separate campaigns, renamed `campaign_id#2`, `campaign_id#3` and so
+  on. Campaign identifiers need to be unique within a geography only.
+
 # mipR 1.0.0
 
 First stable release.

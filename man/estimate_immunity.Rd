@@ -10,7 +10,8 @@ estimate_immunity(
   ve = ve_cdc(),
   coupling = c("dependent", "independent", "complementary"),
   maternal_months = 6,
-  max_doses = 8L
+  max_doses = 8L,
+  conventions = mip_conventions()
 )
 }
 \arguments{
@@ -30,6 +31,9 @@ protected by maternal antibodies. Default \code{6}.}
 
 \item{max_doses}{Most doses tracked; further doses stay in the top group.
 Default \code{8}.}
+
+\item{conventions}{Date and age rules from \code{\link[=mip_conventions]{mip_conventions()}}. Default:
+the conventions the history was built with.}
 }
 \value{
 A list:
@@ -46,11 +50,11 @@ cohort)}
 cohort whose first ever dose came from this opportunity}
 \item{campaign_targets}{One row per cohort and campaign: the share of
 the cohort the campaign can reach (\code{eligible_share}), the dose
-shares of those children on the 15th of the month \code{before} the
-campaign and of the month \code{after} it (\code{dose_0_before},
+shares of those children on the reporting date of the month
+\code{before} the campaign and of the month \code{after} it (\code{dose_0_before},
 \code{dose_0_after} and so on) and \code{first_doses}, for
 \code{\link[=check_immunity]{check_immunity()}}}
-\item{metadata}{The settings used}
+\item{metadata}{The settings used, with the \code{conventions}}
 }
 }
 \description{
@@ -110,6 +114,12 @@ order of \code{event_id}. Monthly values are the state on the 15th of each
 month: every opportunity dated on or before the 15th has been applied in
 full and nothing later has, so every reported share lies between 0 and 1
 and the shares add up to 1.
+
+\strong{Conventions.} The birth days, ages, routine dose dates, reporting date
+and same-date order above are the defaults of \code{\link[=mip_conventions]{mip_conventions()}}. When
+\code{conventions} is not given, the conventions stored in \code{history} by
+\code{\link[=build_vaccination_history]{build_vaccination_history()}} are used; when it is given, it must match
+them.
 
 \strong{Maternal antibodies.} Infants younger than \code{maternal_months} are
 marked in \code{maternal_protection} and left out of \code{\link[=summarise_immunity]{summarise_immunity()}} by

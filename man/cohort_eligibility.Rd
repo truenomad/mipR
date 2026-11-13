@@ -10,7 +10,8 @@ cohort_eligibility(
   end = start,
   age_min_months = 0,
   age_max_months = Inf,
-  convention = c("fractional", "midmonth")
+  convention = c("fractional", "midmonth"),
+  conventions = mip_conventions()
 )
 }
 \arguments{
@@ -26,6 +27,8 @@ cohort_eligibility(
 eligible (exclusive), or \code{Inf} for no upper limit. Default \code{Inf}.}
 
 \item{convention}{\code{"fractional"} (default) or \code{"midmonth"}.}
+
+\item{conventions}{Date and age rules from \code{\link[=mip_conventions]{mip_conventions()}}.}
 }
 \value{
 Numeric vector of eligible shares between 0 and 1, one per
@@ -45,6 +48,12 @@ January turns 9 months on 20 October, so on 15 October the January 2024
 cohort's share aged 9 months or more is 15/31. With
 \code{convention = "midmonth"}, every birth is placed on the 15th, so the
 share is 0 or 1.
+
+\code{conventions} sets the birth and age rules as in \code{\link[=mip_conventions]{mip_conventions()}}:
+with \code{birth = "fixed_day"}, every birth is placed on \code{birth_day}, and
+with \code{age = "days"}, age in months is days since birth divided by
+\code{days_per_month}. \code{convention = "midmonth"} is the same as
+\code{birth = "fixed_day"} with \code{birth_day = 15}.
 
 A child is eligible when, at some time between \code{start} and \code{end}, they
 are at least \code{age_min_months} old and younger than \code{age_max_months}. For

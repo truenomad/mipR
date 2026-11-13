@@ -1019,6 +1019,12 @@ reconstruct_birth_cohorts <- function(
 #' `convention = "midmonth"`, every birth is placed on the 15th, so the
 #' share is 0 or 1.
 #'
+#' `conventions` sets the birth and age rules as in [mip_conventions()]:
+#' with `birth = "fixed_day"`, every birth is placed on `birth_day`, and
+#' with `age = "days"`, age in months is days since birth divided by
+#' `days_per_month`. `convention = "midmonth"` is the same as
+#' `birth = "fixed_day"` with `birth_day = 15`.
+#'
 #' A child is eligible when, at some time between `start` and `end`, they
 #' are at least `age_min_months` old and younger than `age_max_months`. For
 #' a campaign targeting 9-59 months, use `age_min_months = 9` and
@@ -1031,6 +1037,7 @@ reconstruct_birth_cohorts <- function(
 #' @param age_max_months Age in whole months at which children stop being
 #'   eligible (exclusive), or `Inf` for no upper limit. Default `Inf`.
 #' @param convention `"fractional"` (default) or `"midmonth"`.
+#' @param conventions Date and age rules from [mip_conventions()].
 #'
 #' @return Numeric vector of eligible shares between 0 and 1, one per
 #'   `birth_month`.
@@ -1052,7 +1059,8 @@ cohort_eligibility <- function(
   end = start,
   age_min_months = 0,
   age_max_months = Inf,
-  convention = c("fractional", "midmonth")
+  convention = c("fractional", "midmonth"),
+  conventions = mip_conventions()
 ) {
   convention <- match.arg(convention)
   start <- .as_date(start, "start")
@@ -1079,23 +1087,29 @@ cohort_eligibility <- function(
     )
   }
 
+  .check_conventions(conventions)
+  if (convention == "midmonth") {
+    conventions$birth <- "fixed_day"
+    conventions$birth_day <- 15L
+  }
   index <- .month_index(.as_date(birth_month, "birth_month"))
-  midmonth <- convention == "midmonth"
   age_min <- age_min_months
   age_max <- age_max_months
 
   # one row per day of birth in each distinct birth month
-  shares <- dplyr::tibble(index = unique(index)) |>
-    dplyr::mutate(
-      n_days = if (midmonth) 1L else .days_in_month(.data$index)
+  months <- dplyr::tibble(
+    index = unique(index), birth_month = .month_from_index(unique(index))
+  )
+  shares <- months |>
+    dplyr::inner_join(
+      .birth_days(months, conventions), by = "birth_month",
+      relationship = "one-to-many"
     ) |>
-    tidyr::uncount(.data$n_days, .id = "day") |>
     dplyr::mutate(
-      birth_date = .month_from_index(.data$index) +
-        if (midmonth) 14L else .data$day - 1L,
-      old_enough = .add_months(.data$birth_date, age_min) <= end,
+      old_enough = .age_reached(.data$birth_date, age_min, conventions) <=
+        end,
       young_enough = if (is.finite(age_max)) {
-        .add_months(.data$birth_date, age_max) > start
+        .age_reached(.data$birth_date, age_max, conventions) > start
       } else {
         TRUE
       }

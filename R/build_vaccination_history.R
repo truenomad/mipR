@@ -14,7 +14,15 @@
 #' the birth month, so eligibility is worked out for each day of birth. An
 #' opportunity row covers a run of consecutive eligible birth days,
 #' `day_from` to `day_to`; `eligible_share` is the share of the cohort born
-#' on those days.
+#' on those days. With `birth = "fixed_day"` in `conventions`, each cohort
+#' has one birth date and `eligible_share` is 1.
+#'
+#' **Conventions.** `conventions` sets how births are placed in the month,
+#' how age is measured, how routine dose dates are set, the reporting date
+#' and the order of opportunities on the same date. The defaults are
+#' described here; see [mip_conventions()] for the alternatives. The
+#' conventions are stored in `metadata`, and [estimate_immunity()] uses
+#' them unless it is given its own.
 #'
 #' **Routine doses.** Each row of `schedule` gives a dose, the age in whole
 #' months at which it is due, and the period in which the schedule applied.
@@ -37,6 +45,13 @@
 #' with the campaign named, so they are never applied by mistake. Campaign
 #' records are joined to cohorts on the `geography` columns they share, so a
 #' national or admin 1 campaign applies to every cohort inside it.
+#' Campaign identifiers need to be unique within a geography only: the same
+#' `campaign_id` in two geographies is the same campaign in both. More than
+#' one record for a campaign and geography is an error unless
+#' `repeated_campaigns = "separate"`, which applies each record as its own
+#' campaign, in input order, with the second and later records renamed
+#' `campaign_id#2`, `campaign_id#3` and so on. A `coupling` column in
+#' `campaigns` is carried into the history.
 #'
 #' **Coverage intervals.** `coverage_lower` and `coverage_upper` are
 #' optional. When given, both bounds must be finite proportions with
@@ -48,8 +63,8 @@
 #' they reach the schedule age, or the campaign days on which they are in
 #' the target ages. Doses are taken as spread evenly over those dates.
 #' `month` is the calendar month of the midpoint of those dates and
-#' `timing_share` is the share of the dates up to the 15th of that month,
-#' the date at which monthly results are reported. `age_at_dose` is the age
+#' `timing_share` is the share of the dates counted at the reporting date of
+#' that month (the 15th by default). `age_at_dose` is the age
 #' in months at the dose of the child born in the middle of the eligible
 #' days, at the middle of that child's own dose dates, so it is always
 #' within the target ages. [estimate_immunity()] refines the ages and the
@@ -71,6 +86,10 @@
 #'   `end_date`, the period in which the schedule applied (open ended when
 #'   missing).
 #' @param geography Columns that identify the geography of the cohorts.
+#' @param conventions Date and age rules from [mip_conventions()]. The
+#'   default keeps the rules described here.
+#' @param repeated_campaigns What to do with more than one record for a
+#'   campaign and geography: `"error"` (default) or `"separate"`.
 #'
 #' @return A list:
 #'   \describe{
@@ -81,13 +100,15 @@
 #'       `eligible_share`, `timing_share`, `age_at_dose`, `age_months`
 #'       (routine), `start_date`, `end_date`, `age_min_months` and
 #'       `age_max_months` (campaigns), `coverage`, `coverage_lower`,
-#'       `coverage_upper`, `coverage_year` and `coverage_source`. Typed and
-#'       empty when there are no opportunities}
+#'       `coverage_upper`, `coverage_year` and `coverage_source`, with
+#'       `coupling` when `campaigns` has it and `input_order` when
+#'       `same_date_order = "input"`. Typed and empty when there are no
+#'       opportunities}
 #'     \item{cells}{One row per cohort: `cell`, the `geography` columns and
 #'       `birth_month`}
 #'     \item{diagnostics}{One row per problem: `check`, `detail` and the
 #'       records concerned}
-#'     \item{metadata}{The rules used}
+#'     \item{metadata}{The rules used, with the `conventions`}
 #'   }
 #'
 #' @examples
@@ -111,8 +132,12 @@ build_vaccination_history <- function(
   routine_coverage,
   campaigns = NULL,
   schedule,
-  geography
+  geography,
+  conventions = mip_conventions(),
+  repeated_campaigns = c("error", "separate")
 ) {
+  .check_conventions(conventions)
+  repeated_campaigns <- match.arg(repeated_campaigns)
   panel <- .cohort_panel_input(cohorts, geography)
   schedule <- .check_schedule(schedule)
   routine_coverage <- .check_routine_coverage(routine_coverage, geography)
@@ -123,8 +148,13 @@ build_vaccination_history <- function(
     dplyr::arrange(dplyr::across(dplyr::all_of(cell_cols))) |>
     dplyr::mutate(cell = dplyr::row_number(), .before = 1)
 
-  routine <- .routine_events(cells, routine_coverage, schedule, geography)
-  campaign <- .campaign_events(cells, campaigns, geography)
+  routine <- .routine_events(
+    cells, routine_coverage, schedule, geography, conventions
+  )
+  campaign <- .campaign_events(
+    cells, campaigns, geography, conventions, repeated_campaigns,
+    n_routine = dplyr::n_distinct(schedule$dose)
+  )
 
   history <- dplyr::bind_rows(
     .empty_history(cells), routine$events, campaign$events
@@ -132,6 +162,9 @@ build_vaccination_history <- function(
     dplyr::arrange(
       .data$cell, .data$date_from, .data$type, .data$day_from
     )
+  if (conventions$same_date_order != "input") {
+    history <- dplyr::select(history, -dplyr::any_of("input_order"))
+  }
   diagnostics <- dplyr::bind_rows(
     dplyr::tibble(check = character(), detail = character()),
     routine$diagnostics,
@@ -143,7 +176,11 @@ build_vaccination_history <- function(
     cells = cells,
     diagnostics = diagnostics,
     metadata = list(
-      births_within_month = "uniform by day",
+      births_within_month = if (conventions$birth == "uniform") {
+        "uniform by day"
+      } else {
+        paste("one birth date per cohort, day", conventions$birth_day)
+      },
       routine_rule = paste(
         "offered on the date the schedule age is reached, within any",
         "schedule period for that dose and age; coverage of the calendar",
@@ -159,7 +196,8 @@ build_vaccination_history <- function(
         "both bounds or none; bounds are finite proportions that contain",
         "the coverage"
       ),
-      reporting_date = "15th of each month"
+      reporting_date = .reporting_text(conventions),
+      conventions = conventions
     )
   )
 }
@@ -206,7 +244,8 @@ build_vaccination_history <- function(
       coverage_lower = numeric(),
       coverage_upper = numeric(),
       coverage_year = integer(),
-      coverage_source = character()
+      coverage_source = character(),
+      input_order = integer()
     )
 }
 
@@ -418,6 +457,12 @@ build_vaccination_history <- function(
 # with day_from and day_to. days has one row per eligible day
 #' @noRd
 .day_runs <- function(days, keys) {
+  if (nrow(days) == 0) {
+    return(
+      dplyr::select(days, dplyr::all_of(keys)) |>
+        dplyr::mutate(day_from = integer(), day_to = integer())
+    )
+  }
   days |>
     dplyr::distinct(dplyr::across(dplyr::all_of(c(keys, "day")))) |>
     dplyr::arrange(dplyr::across(dplyr::all_of(c(keys, "day")))) |>
@@ -435,16 +480,6 @@ build_vaccination_history <- function(
     dplyr::select(-"run")
 }
 
-# internal helper: birth months of the cells with their number of days, one
-# row per day of birth
-#' @noRd
-.birth_days <- function(cells) {
-  dplyr::tibble(birth_month = unique(cells$birth_month)) |>
-    dplyr::mutate(n_days = .days_in_month(.month_index(.data$birth_month))) |>
-    tidyr::uncount(.data$n_days, .id = "day") |>
-    dplyr::mutate(birth_date = .data$birth_month + .data$day - 1L)
-}
-
 # internal helper: share of the dates from `from` to `to` (inclusive) that
 # fall on or before `at`, with doses spread evenly over the dates
 #' @noRd
@@ -455,16 +490,17 @@ build_vaccination_history <- function(
 }
 
 # internal helper: the calendar month of the midpoint of each opportunity's
-# dates, and the share of the dates up to the 15th of that month
+# dates, and the share of the dates counted at that month's reporting date
 #' @noRd
-.opportunity_timing <- function(data) {
+.opportunity_timing <- function(data, conventions = mip_conventions()) {
   data |>
     dplyr::mutate(
       midpoint = .data$date_from +
         as.numeric(.data$date_to - .data$date_from) %/% 2,
       month = .month_from_index(.month_index(.data$midpoint)),
       timing_share = .elapsed_share(
-        .data$date_from, .data$date_to, .data$month + 14L
+        .data$date_from, .data$date_to,
+        .last_counted_date(.data$month, conventions)
       )
     ) |>
     dplyr::select(-"midpoint")
@@ -488,19 +524,37 @@ build_vaccination_history <- function(
 # taken at the middle of the campaign days on which the child is in the
 # target ages, so it is always within the target ages
 #' @noRd
-.campaign_age <- function(birth_date, start, end, age_min, age_max) {
-  first <- pmax(start, .add_months(birth_date, age_min))
-  last <- pmin(end, .add_months(birth_date, age_max) - 1L)
-  .age_in_months(birth_date, first + as.numeric(last - first) %/% 2)
+.campaign_age <- function(birth_date, start, end, age_min, age_max,
+                          conventions = mip_conventions()) {
+  first <- pmax(start, .age_reached(birth_date, age_min, conventions))
+  last <- pmin(end, .age_reached(birth_date, age_max, conventions) - 1L)
+  .age_at(birth_date, first + as.numeric(last - first) %/% 2, conventions)
+}
+
+# internal helper: age at a routine dose due at age_months. with calendar
+# ages and dose dates it is the schedule age itself
+#' @noRd
+.routine_age <- function(birth_date, age_months,
+                         conventions = mip_conventions()) {
+  if (conventions$age == "calendar" &&
+        conventions$dose_timing == "calendar_months") {
+    return(age_months)
+  }
+  .age_at(
+    birth_date, .dose_date(birth_date, age_months, conventions), conventions
+  )
 }
 
 # internal helper: routine opportunities. eligibility is the same for every
 # cohort born in a month, so it is worked out once per birth month
 #' @noRd
-.routine_events <- function(cells, coverage, schedule, geography) {
-  ranges <- tidyr::expand_grid(schedule, .birth_days(cells)) |>
+.routine_events <- function(cells, coverage, schedule, geography,
+                            conventions = mip_conventions()) {
+  ranges <- tidyr::expand_grid(schedule, .birth_days(cells, conventions)) |>
     dplyr::mutate(
-      dose_date = .add_months(.data$birth_date, .data$age_months)
+      dose_date = .dose_date(
+        .data$birth_date, .data$age_months, conventions
+      )
     ) |>
     dplyr::filter(
       .data$dose_date >= .data$start_date, .data$dose_date <= .data$end_date
@@ -511,15 +565,22 @@ build_vaccination_history <- function(
   }
   ranges <- ranges |>
     dplyr::mutate(
-      n_days = .days_in_month(.month_index(.data$birth_month)),
-      date_from = .add_months(
-        .data$birth_month + .data$day_from - 1L, .data$age_months
+      n_days = .cohort_days(.data$birth_month, conventions),
+      date_from = .dose_date(
+        .data$birth_month + .data$day_from - 1L, .data$age_months,
+        conventions
       ),
-      date_to = .add_months(
-        .data$birth_month + .data$day_to - 1L, .data$age_months
-      )
+      date_to = .dose_date(
+        .data$birth_month + .data$day_to - 1L, .data$age_months,
+        conventions
+      ),
+      age_at_dose = .routine_age(
+        .data$birth_month + (.data$day_from + .data$day_to) %/% 2L - 1L,
+        .data$age_months, conventions
+      ),
+      input_order = match(.data$dose, unique(schedule$dose))
     ) |>
-    .opportunity_timing()
+    .opportunity_timing(conventions)
 
   events <- cells |>
     dplyr::inner_join(
@@ -603,7 +664,7 @@ build_vaccination_history <- function(
       .data$month,
       .data$eligible_share,
       .data$timing_share,
-      age_at_dose = .data$age_months,
+      .data$age_at_dose,
       .data$age_months,
       start_date = as.Date(NA),
       end_date = as.Date(NA),
@@ -613,7 +674,8 @@ build_vaccination_history <- function(
       .data$coverage_lower,
       .data$coverage_upper,
       .data$coverage_year,
-      coverage_source = paste("routine coverage", .data$coverage_year)
+      coverage_source = paste("routine coverage", .data$coverage_year),
+      .data$input_order
     )
 
   list(
@@ -624,7 +686,9 @@ build_vaccination_history <- function(
 
 # internal helper: campaign opportunities from prepare_campaigns() records
 #' @noRd
-.campaign_events <- function(cells, campaigns, geography) {
+.campaign_events <- function(cells, campaigns, geography,
+                             conventions = mip_conventions(),
+                             repeated = "error", n_routine = 0L) {
   if (is.null(campaigns)) {
     return(list(events = NULL, diagnostics = NULL))
   }
@@ -656,16 +720,12 @@ build_vaccination_history <- function(
       end_date = \(x) inherits(x, "Date")
     )
   )
-  campaigns <- dplyr::as_tibble(campaigns)
-  repeated <- campaigns |>
-    dplyr::count(dplyr::across(dplyr::all_of(c(join_cols, "campaign_id")))) |>
-    dplyr::filter(.data$n > 1)
-  if (nrow(repeated) > 0) {
-    cli::cli_abort(c(
-      "{.arg campaigns} has more than one record per campaign and geography.",
-      "x" = "Campaign{?s} {.val {unique(repeated$campaign_id)}}",
-      "i" = "Each record would be applied as a separate campaign."
-    ))
+  campaigns <- dplyr::as_tibble(campaigns) |>
+    dplyr::mutate(.input_row = dplyr::row_number())
+  campaigns <- .repeated_campaigns(campaigns, join_cols, repeated)
+  if ("coupling" %in% names(campaigns)) {
+    .check_raw_types(campaigns, "campaigns", list(coupling = is.character))
+    .check_coupling_values(campaigns$coupling, "campaigns")
   }
   campaigns <- campaigns |>
     dplyr::mutate(
@@ -749,10 +809,14 @@ build_vaccination_history <- function(
   definitions <- dplyr::distinct(
     campaigns, dplyr::across(dplyr::all_of(definition_cols))
   )
-  ranges <- tidyr::expand_grid(definitions, .birth_days(cells)) |>
+  ranges <- tidyr::expand_grid(
+    definitions, .birth_days(cells, conventions)
+  ) |>
     dplyr::filter(
-      .add_months(.data$birth_date, .data$age_min_months) <= .data$end_date,
-      .add_months(.data$birth_date, .data$age_max_months) > .data$start_date
+      .age_reached(.data$birth_date, .data$age_min_months, conventions) <=
+        .data$end_date,
+      .age_reached(.data$birth_date, .data$age_max_months, conventions) >
+        .data$start_date
     ) |>
     .day_runs(c(definition_cols, "birth_month"))
 
@@ -761,34 +825,38 @@ build_vaccination_history <- function(
       campaigns |>
         dplyr::select(
           dplyr::all_of(c(join_cols, definition_cols)), "campaign_id",
-          "coverage", "coverage_lower", "coverage_upper", "coverage_source"
+          "coverage", "coverage_lower", "coverage_upper", "coverage_source",
+          ".input_row", dplyr::any_of("coupling")
         ),
       by = join_cols,
       relationship = "many-to-many"
     ) |>
     dplyr::inner_join(ranges, by = c("birth_month", definition_cols)) |>
     dplyr::mutate(
-      n_days = .days_in_month(.month_index(.data$birth_month)),
+      n_days = .cohort_days(.data$birth_month, conventions),
       eligible_share = (.data$day_to - .data$day_from + 1) / .data$n_days,
       date_from = pmax(
         .data$start_date,
-        .add_months(
-          .data$birth_month + .data$day_from - 1L, .data$age_min_months
+        .age_reached(
+          .data$birth_month + .data$day_from - 1L, .data$age_min_months,
+          conventions
         )
       ),
       date_to = pmin(
         .data$end_date,
-        .add_months(
-          .data$birth_month + .data$day_to - 1L, .data$age_max_months
+        .age_reached(
+          .data$birth_month + .data$day_to - 1L, .data$age_max_months,
+          conventions
         ) - 1L
       ),
       age_at_dose = .campaign_age(
         .data$birth_month + (.data$day_from + .data$day_to) %/% 2L - 1L,
         .data$start_date, .data$end_date, .data$age_min_months,
-        .data$age_max_months
-      )
+        .data$age_max_months, conventions
+      ),
+      input_order = n_routine + .data$.input_row
     ) |>
-    .opportunity_timing()
+    .opportunity_timing(conventions)
   events <- events |>
     dplyr::mutate(
       record = .record_key(events, c("campaign_id", join_cols), "sia")
@@ -817,8 +885,90 @@ build_vaccination_history <- function(
       .data$coverage_lower,
       .data$coverage_upper,
       coverage_year = NA_integer_,
-      .data$coverage_source
+      .data$coverage_source,
+      .data$input_order,
+      dplyr::across(dplyr::any_of("coupling"))
     )
 
   list(events = events, diagnostics = skipped)
+}
+
+# internal helper: repeated records of a campaign and geography stop, or
+# with "separate" become campaign_id#2, #3 in input order
+#' @noRd
+.repeated_campaigns <- function(campaigns, join_cols, repeated) {
+  numbered <- campaigns |>
+    dplyr::mutate(
+      .repeat = dplyr::row_number(),
+      .n_records = dplyr::n(),
+      .by = dplyr::all_of(c(join_cols, "campaign_id"))
+    )
+  if (all(numbered$.n_records == 1)) {
+    return(campaigns)
+  }
+  if (repeated == "error") {
+    ids <- unique(numbered$campaign_id[numbered$.n_records > 1])
+    cli::cli_abort(c(
+      "{.arg campaigns} has more than one record per campaign and geography.",
+      "x" = "Campaign{?s} {.val {ids}}",
+      "i" = paste(
+        "Use {.code repeated_campaigns = \"separate\"} to apply each",
+        "record as a separate campaign."
+      )
+    ))
+  }
+  renamed <- numbered |>
+    dplyr::mutate(
+      campaign_id = dplyr::if_else(
+        .data$.repeat > 1,
+        paste0(.data$campaign_id, "#", .data$.repeat),
+        .data$campaign_id
+      )
+    )
+  clashes <- renamed |>
+    dplyr::count(dplyr::across(dplyr::all_of(c(join_cols, "campaign_id")))) |>
+    dplyr::filter(.data$n > 1)
+  if (nrow(clashes) > 0) {
+    cli::cli_abort(c(
+      "Numbering repeated campaign records gives identifiers already in use.",
+      "x" = "{.val {unique(clashes$campaign_id)}}"
+    ))
+  }
+  dplyr::select(renamed, -".repeat", -".n_records")
+}
+
+# internal helper: coupling values must be coupling rules or NA
+#' @noRd
+.check_coupling_values <- function(couplings, arg) {
+  if (!all(is.na(couplings) |
+             couplings %in% c("dependent", "independent", "complementary"))) {
+    cli::cli_abort(paste(
+      "{.arg {arg}} {.val coupling} must be {.val dependent},",
+      "{.val independent}, {.val complementary} or NA."
+    ))
+  }
+  invisible(couplings)
+}
+
+# internal helper: the reporting date in words, for metadata
+#' @noRd
+.reporting_text <- function(conventions) {
+  day <- conventions$report_day
+  suffix <- if (day %in% c(1L, 21L)) {
+    "st"
+  } else if (day %in% c(2L, 22L)) {
+    "nd"
+  } else if (day %in% c(3L, 23L)) {
+    "rd"
+  } else {
+    "th"
+  }
+  paste0(
+    day, suffix, " of each month",
+    if (conventions$report_before_events) {
+      ", before the opportunities dated that day"
+    } else {
+      ""
+    }
+  )
 }

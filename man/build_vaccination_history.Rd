@@ -9,7 +9,9 @@ build_vaccination_history(
   routine_coverage,
   campaigns = NULL,
   schedule,
-  geography
+  geography,
+  conventions = mip_conventions(),
+  repeated_campaigns = c("error", "separate")
 )
 }
 \arguments{
@@ -29,6 +31,12 @@ data frame. Optional.}
 missing).}
 
 \item{geography}{Columns that identify the geography of the cohorts.}
+
+\item{conventions}{Date and age rules from \code{\link[=mip_conventions]{mip_conventions()}}. The
+default keeps the rules described here.}
+
+\item{repeated_campaigns}{What to do with more than one record for a
+campaign and geography: \code{"error"} (default) or \code{"separate"}.}
 }
 \value{
 A list:
@@ -40,13 +48,15 @@ birth days: \code{cell}, the \code{geography} columns, \code{birth_month},
 \code{eligible_share}, \code{timing_share}, \code{age_at_dose}, \code{age_months}
 (routine), \code{start_date}, \code{end_date}, \code{age_min_months} and
 \code{age_max_months} (campaigns), \code{coverage}, \code{coverage_lower},
-\code{coverage_upper}, \code{coverage_year} and \code{coverage_source}. Typed and
-empty when there are no opportunities}
+\code{coverage_upper}, \code{coverage_year} and \code{coverage_source}, with
+\code{coupling} when \code{campaigns} has it and \code{input_order} when
+\code{same_date_order = "input"}. Typed and empty when there are no
+opportunities}
 \item{cells}{One row per cohort: \code{cell}, the \code{geography} columns and
 \code{birth_month}}
 \item{diagnostics}{One row per problem: \code{check}, \code{detail} and the
 records concerned}
-\item{metadata}{The rules used}
+\item{metadata}{The rules used, with the \code{conventions}}
 }
 }
 \description{
@@ -62,7 +72,15 @@ apply and the age at the dose. The result is the input to
 the birth month, so eligibility is worked out for each day of birth. An
 opportunity row covers a run of consecutive eligible birth days,
 \code{day_from} to \code{day_to}; \code{eligible_share} is the share of the cohort born
-on those days.
+on those days. With \code{birth = "fixed_day"} in \code{conventions}, each cohort
+has one birth date and \code{eligible_share} is 1.
+
+\strong{Conventions.} \code{conventions} sets how births are placed in the month,
+how age is measured, how routine dose dates are set, the reporting date
+and the order of opportunities on the same date. The defaults are
+described here; see \code{\link[=mip_conventions]{mip_conventions()}} for the alternatives. The
+conventions are stored in \code{metadata}, and \code{\link[=estimate_immunity]{estimate_immunity()}} uses
+them unless it is given its own.
 
 \strong{Routine doses.} Each row of \code{schedule} gives a dose, the age in whole
 months at which it is due, and the period in which the schedule applied.
@@ -85,6 +103,13 @@ to 1, an end before the start or an invalid age range stop the function
 with the campaign named, so they are never applied by mistake. Campaign
 records are joined to cohorts on the \code{geography} columns they share, so a
 national or admin 1 campaign applies to every cohort inside it.
+Campaign identifiers need to be unique within a geography only: the same
+\code{campaign_id} in two geographies is the same campaign in both. More than
+one record for a campaign and geography is an error unless
+\code{repeated_campaigns = "separate"}, which applies each record as its own
+campaign, in input order, with the second and later records renamed
+\code{campaign_id#2}, \code{campaign_id#3} and so on. A \code{coupling} column in
+\code{campaigns} is carried into the history.
 
 \strong{Coverage intervals.} \code{coverage_lower} and \code{coverage_upper} are
 optional. When given, both bounds must be finite proportions with
@@ -96,8 +121,8 @@ which children born on \code{day_from} to \code{day_to} receive the dose: the da
 they reach the schedule age, or the campaign days on which they are in
 the target ages. Doses are taken as spread evenly over those dates.
 \code{month} is the calendar month of the midpoint of those dates and
-\code{timing_share} is the share of the dates up to the 15th of that month,
-the date at which monthly results are reported. \code{age_at_dose} is the age
+\code{timing_share} is the share of the dates counted at the reporting date of
+that month (the 15th by default). \code{age_at_dose} is the age
 in months at the dose of the child born in the middle of the eligible
 days, at the middle of that child's own dose dates, so it is always
 within the target ages. \code{\link[=estimate_immunity]{estimate_immunity()}} refines the ages and the

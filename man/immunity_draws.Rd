@@ -17,6 +17,7 @@ immunity_draws(
   batch_size = 10,
   workers = .default_workers(),
   max_doses = 8L,
+  conventions = mip_conventions(),
   ...
 )
 }
@@ -54,6 +55,9 @@ it the draws run one batch at a time.}
 
 \item{max_doses}{Most doses tracked; further doses stay in the top group.
 Default \code{8}.}
+
+\item{conventions}{Date and age rules from \code{\link[=mip_conventions]{mip_conventions()}}. Default:
+the conventions the history was built with.}
 
 \item{...}{Passed to \code{\link[=summarise_immunity]{summarise_immunity()}}, for example \code{geography},
 \code{at} and \code{age_breaks}.}
