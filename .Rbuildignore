@@ -10,3 +10,4 @@
 ^examples$
 ^\.zenodo\.json$
 ^CITATION\.cff$
+^data-raw$
