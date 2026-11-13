@@ -254,10 +254,6 @@ pak::pak(c("PPgp/wpp2024", "ggplot2", "ahadi-analytics/sntutils", "mirai"))
 
 The synthetic example above uses the core dependencies only. The Nigeria scripts also require `here`, `pdftools`, `stringr` and `tibble`.
 
-## Development status
-
-`mipR` is under active development. The functions documented above are implemented and tested, but their interfaces may change before the first release.
-
 ## Reference
 
 `mipR` builds on the population immunity profiling method described by:
