@@ -6,6 +6,7 @@
 [![Last commit](https://img.shields.io/github/last-commit/truenomad/mipR)](https://github.com/truenomad/mipR/commits/main)
 [![Version](https://img.shields.io/github/r-package/v/truenomad/mipR?label=version)](https://github.com/truenomad/mipR/blob/main/DESCRIPTION)
 [![R >= 4.1.0](https://img.shields.io/badge/R-%E2%89%A5%204.1.0-276DC3.svg)](https://www.r-project.org/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24193263.svg)](https://doi.org/10.5281/zenodo.24193263)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/truenomad/mipR/blob/main/LICENSE.md)
 
 <!-- badges: end -->

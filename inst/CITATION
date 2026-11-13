@@ -8,5 +8,6 @@ bibentry(
   ),
   year = "2026",
   note = "R package version 1.0.0",
+  doi = "10.5281/zenodo.24193264",
   url = "https://github.com/truenomad/mipR"
 )
