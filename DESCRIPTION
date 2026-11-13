@@ -1,6 +1,6 @@
 Package: mipR
 Title: Measles Immunity Profiling by Birth Cohort, Area and Month
-Version: 1.0.0
+Version: 1.1.0
 Authors@R: 
     person("Mohamed A.", "Yusuf", , "moyusuf@who.int", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-9339-4613"))

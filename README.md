@@ -224,6 +224,8 @@ with routine coverage for the calendar year of the dose (IHME, by geography) and
 
 A later opportunity cannot change an earlier report. Campaign timing and coverage remain model assumptions; the history metadata documents the rules applied. Check these against the campaign records before interpreting monthly changes.
 
+**Date and age conventions.** The rules above are the defaults of `mip_conventions()`, which is passed to `build_vaccination_history()` through its `conventions` argument. It can instead place every birth of a cohort on one day of the month (`birth = "fixed_day"`), measure age as days since birth divided by `days_per_month` (`age = "days"`), date routine doses that many days after birth (`dose_timing = "days"`), report on another day of the month and before that day's opportunities (`report_day`, `report_before_events`), and apply opportunities on the same date in input order (`same_date_order = "input"`). `mip_conventions_preset("v2_pipeline")` sets the rules of the measles campaign pipeline's vaccination-only runs.
+
 **Susceptible population.** The susceptible count in each geography, cohort and month is
 
 ```math
