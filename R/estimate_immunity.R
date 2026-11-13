@@ -57,6 +57,12 @@
 #' full and nothing later has, so every reported share lies between 0 and 1
 #' and the shares add up to 1.
 #'
+#' **Conventions.** The birth days, ages, routine dose dates, reporting date
+#' and same-date order above are the defaults of [mip_conventions()]. When
+#' `conventions` is not given, the conventions stored in `history` by
+#' [build_vaccination_history()] are used; when it is given, it must match
+#' them.
+#'
 #' **Maternal antibodies.** Infants younger than `maternal_months` are
 #' marked in `maternal_protection` and left out of [summarise_immunity()] by
 #' default, rather than modelled.
@@ -77,6 +83,8 @@
 #'   protected by maternal antibodies. Default `6`.
 #' @param max_doses Most doses tracked; further doses stay in the top group.
 #'   Default `8`.
+#' @param conventions Date and age rules from [mip_conventions()]. Default:
+#'   the conventions the history was built with.
 #'
 #' @return A list:
 #'   \describe{
@@ -92,11 +100,11 @@
 #'       cohort whose first ever dose came from this opportunity}
 #'     \item{campaign_targets}{One row per cohort and campaign: the share of
 #'       the cohort the campaign can reach (`eligible_share`), the dose
-#'       shares of those children on the 15th of the month `before` the
-#'       campaign and of the month `after` it (`dose_0_before`,
+#'       shares of those children on the reporting date of the month
+#'       `before` the campaign and of the month `after` it (`dose_0_before`,
 #'       `dose_0_after` and so on) and `first_doses`, for
 #'       [check_immunity()]}
-#'     \item{metadata}{The settings used}
+#'     \item{metadata}{The settings used, with the `conventions`}
 #'   }
 #'
 #' @examples
@@ -123,18 +131,25 @@ estimate_immunity <- function(
   ve = ve_cdc(),
   coupling = c("dependent", "independent", "complementary"),
   maternal_months = 6,
-  max_doses = 8L
+  max_doses = 8L,
+  conventions = mip_conventions()
 ) {
   coupling <- match.arg(coupling)
   .check_ve(ve)
   max_doses <- .check_count(max_doses, "max_doses", lower = 3)
   .check_number(maternal_months, "maternal_months", lower = 0)
   .check_history(history)
+  conventions <- .resolve_conventions(
+    history, conventions, given = !missing(conventions)
+  )
+  .check_input_order(history$history, conventions)
   cells <- history$cells
   geography <- setdiff(names(cells), c("cell", "birth_month"))
   panel <- .cohort_panel_input(cohorts, geography)
 
-  run <- .run_cohorts(cells, history$history, coupling, ve, max_doses)
+  run <- .run_cohorts(
+    cells, history$history, coupling, ve, max_doses, conventions
+  )
 
   immunity <- .monthly_values(
     panel, cells, run$units, run$unit_values, geography
@@ -175,15 +190,21 @@ estimate_immunity <- function(
       ve = ve,
       maternal_months = maternal_months,
       max_doses = max_doses,
-      reporting_date = "15th of each month",
+      reporting_date = .reporting_text(conventions),
       timing_rule = paste(
         "exact dates by day of birth; routine doses on the date the",
         "schedule age is reached; campaigns spread evenly over each birth",
         "day's eligible campaign days, reaching each child at most once per",
-        "campaign; same-date order mcv1, mcv2, campaigns by event_id"
+        "campaign; same-date order",
+        if (conventions$same_date_order == "input") {
+          "the order of the input rows"
+        } else {
+          "mcv1, mcv2, campaigns by event_id"
+        }
       ),
       effectiveness_rule = "age on the date of the dose",
-      immunity_sources = "vaccination only"
+      immunity_sources = "vaccination only",
+      conventions = conventions
     )
   )
 }
@@ -685,10 +706,11 @@ ve_cdc <- function(
 
 # internal helper: run the opportunities of every cohort by day of birth,
 # with exact dates. returns the runs of birth days (`units`, with their
-# cohort and weight), the state of each run at the 15th of every month in
-# which it changes, and each opportunity's contribution to its cohort
+# cohort and weight), the state of each run at the reporting date of every
+# month in which it changes, and each opportunity's contribution to its cohort
 #' @noRd
-.run_cohorts <- function(cells, events, coupling, ve, max_doses) {
+.run_cohorts <- function(cells, events, coupling, ve, max_doses,
+                         conventions = mip_conventions()) {
   # a campaign may share its name with a dose type, and a dose may be due
   # at different ages in different periods, so opportunities are keyed by
   # type, identifier and schedule age together
@@ -701,7 +723,10 @@ ve_cdc <- function(
       coupling = as.character(.optional_column(events, "coupling"))
     )
   patterns <- .cohort_patterns(cells, events)
-  dated <- .pattern_subevents(patterns$patterns, patterns$definitions, ve)
+  dated <- .pattern_subevents(
+    patterns$patterns, patterns$definitions, ve, conventions
+  )
+  order_cols <- .same_date_order(conventions)
 
   units <- patterns$cells |>
     dplyr::inner_join(
@@ -742,7 +767,8 @@ ve_cdc <- function(
       by = c("band", "type")
     ) |>
     dplyr::arrange(
-      .data$unit, .data$date, .data$type_order, .data$event_id, .data$k
+      .data$unit, .data$date, dplyr::across(dplyr::all_of(order_cols)),
+      .data$k
     ) |>
     dplyr::transmute(
       cell = .data$unit, .data$event_id, .data$type, .data$reach,
@@ -786,9 +812,9 @@ ve_cdc <- function(
 }
 
 # internal helper: the vaccination state of each campaign's target children
-# (the birth days it can reach) on the 15th of the month before it starts
-# and of the month after it ends, from the exact run states. one row per
-# cohort and campaign, with the share of the cohort that is targeted
+# (the birth days it can reach) at the reporting date of the month before
+# it starts and of the month after it ends, from the exact run states. one
+# row per cohort and campaign, with the share of the cohort that is targeted
 #' @noRd
 .campaign_targets <- function(events, membership, units, unit_values,
                               opportunities) {
@@ -864,7 +890,8 @@ ve_cdc <- function(
 .cohort_patterns <- function(cells, events) {
   definition_cols <- c(
     "event_key", "event_id", "type", "age_months", "start_date", "end_date",
-    "age_min_months", "age_max_months", "day_from", "day_to"
+    "age_min_months", "age_max_months", "day_from", "day_to",
+    intersect("input_order", names(events))
   )
   keyed <- events |>
     dplyr::arrange(
@@ -911,14 +938,14 @@ ve_cdc <- function(
 # its first day. returns the groups with their weights and the sub-events
 # of each group's representative day
 #' @noRd
-.pattern_subevents <- function(patterns, definitions, ve) {
+.pattern_subevents <- function(patterns, definitions, ve,
+                               conventions = mip_conventions()) {
   days <- patterns |>
-    dplyr::mutate(
-      n_days = .days_in_month(.month_index(.data$birth_month)),
-      days_in_month = .data$n_days
+    dplyr::inner_join(
+      .birth_days(patterns, conventions), by = "birth_month",
+      relationship = "many-to-many"
     ) |>
-    tidyr::uncount(.data$n_days, .id = "day") |>
-    dplyr::mutate(birth_date = .data$birth_month + .data$day - 1L)
+    dplyr::rename(days_in_month = "cohort_days")
   on_days <- definitions |>
     dplyr::inner_join(
       dplyr::select(days, "pattern", "day", "birth_date"),
@@ -928,18 +955,20 @@ ve_cdc <- function(
   routine <- on_days |>
     dplyr::filter(.data$type != "sia") |>
     dplyr::mutate(
-      date = .add_months(.data$birth_date, .data$age_months),
+      date = .dose_date(.data$birth_date, .data$age_months, conventions),
       k = 1L, n = 1L
     )
   campaign <- on_days |>
     dplyr::filter(.data$type == "sia") |>
     dplyr::mutate(
       from = pmax(
-        .data$start_date, .add_months(.data$birth_date, .data$age_min_months)
+        .data$start_date,
+        .age_reached(.data$birth_date, .data$age_min_months, conventions)
       ),
       to = pmin(
         .data$end_date,
-        .add_months(.data$birth_date, .data$age_max_months) - 1L
+        .age_reached(.data$birth_date, .data$age_max_months, conventions) -
+          1L
       ),
       n = as.integer(.data$to - .data$from) + 1L
     ) |>
@@ -951,20 +980,22 @@ ve_cdc <- function(
     dplyr::mutate(band = dplyr::row_number())
   subevents <- dplyr::bind_rows(routine, campaign) |>
     dplyr::mutate(
-      age = pmax(.age_in_months(.data$birth_date, .data$date), min(ve$breaks)),
-      report_month = .report_month_index(.data$date),
+      age = pmax(
+        .age_at(.data$birth_date, .data$date, conventions), min(ve$breaks)
+      ),
+      report_month = .report_month_index(.data$date, conventions),
       type_order = match(.data$type, c("mcv1", "mcv2", "sia"))
     ) |>
     dplyr::left_join(
       bands, by = dplyr::join_by(closest("age" >= "age_from"))
     ) |>
     dplyr::arrange(
-      .data$pattern, .data$day, .data$date, .data$type_order,
-      .data$event_id, .data$k
+      .data$pattern, .data$day, .data$date,
+      dplyr::across(dplyr::all_of(.same_date_order(conventions))), .data$k
     ) |>
     dplyr::select(
       "pattern", "day", "event_key", "event_id", "type", "type_order", "k",
-      "n", "date", "report_month", "band"
+      "n", "date", "report_month", "band", dplyr::any_of("input_order")
     )
 
   signatures <- subevents |>
@@ -999,11 +1030,43 @@ ve_cdc <- function(
   )
 }
 
-# internal helper: the first month whose reporting date (the 15th) is on or
-# after each date
+# internal helper: the first month whose reported value counts an
+# opportunity on each date
 #' @noRd
-.report_month_index <- function(date) {
-  .month_index(date) + as.integer(as.POSIXlt(date)$mday > 15L)
+.report_month_index <- function(date, conventions = mip_conventions()) {
+  day <- as.POSIXlt(date)$mday
+  later <- if (conventions$report_before_events) {
+    day >= conventions$report_day
+  } else {
+    day > conventions$report_day
+  }
+  .month_index(date) + as.integer(later)
+}
+
+# internal helper: columns that order opportunities on the same date
+#' @noRd
+.same_date_order <- function(conventions) {
+  if (conventions$same_date_order == "input") {
+    return("input_order")
+  }
+  c("type_order", "event_id")
+}
+
+# internal helper: the history needs input_order when same-date
+# opportunities follow it
+#' @noRd
+.check_input_order <- function(events, conventions) {
+  if (conventions$same_date_order == "input" && nrow(events) > 0 &&
+        (!"input_order" %in% names(events) || anyNA(events$input_order))) {
+    cli::cli_abort(c(
+      "{.arg history} has no {.val input_order} column.",
+      "i" = paste(
+        "Build it with {.fn build_vaccination_history} and",
+        "{.code same_date_order = \"input\"} in {.arg conventions}."
+      )
+    ))
+  }
+  invisible(TRUE)
 }
 
 # internal helper: each opportunity's contribution to its cohort, adding up
@@ -1050,8 +1113,8 @@ ve_cdc <- function(
 
 # monthly values ---------------------------------------------------------------
 
-# internal helper: state of each cohort on the 15th of each month, adding up
-# its runs of birth days by their share of the cohort. a run keeps the
+# internal helper: state of each cohort at each monthly reporting date,
+# adding up its runs of birth days by their share of the cohort. a run keeps the
 # state of its latest change month; before any change every child is
 # unvaccinated. extra columns of `cells`, such as a draw number, are kept
 #' @noRd
@@ -1164,6 +1227,7 @@ immunity_draws <- function(
   batch_size = 10,
   workers = .default_workers(),
   max_doses = 8L,
+  conventions = mip_conventions(),
   ...
 ) {
   coupling <- match.arg(coupling)
@@ -1177,6 +1241,10 @@ immunity_draws <- function(
   .check_number(rho_doses, "rho_doses", lower = -1, upper = 1)
   .check_number(maternal_months, "maternal_months", lower = 0)
   .check_history(history)
+  conventions <- .resolve_conventions(
+    history, conventions, given = !missing(conventions)
+  )
+  .check_input_order(history$history, conventions)
   geography <- setdiff(names(history$cells), c("cell", "birth_month"))
   panel <- .cohort_panel_input(cohorts, geography)
   cells <- history$cells
@@ -1188,7 +1256,7 @@ immunity_draws <- function(
   last_report <- NULL
   if (!is.null(at)) {
     months <- .month_from_index(.month_index(.as_date(at, "at")))
-    last_report <- max(months) + 14L
+    last_report <- .last_counted_date(max(months), conventions)
     panel <- dplyr::filter(panel, .data$month %in% months)
     cells <- dplyr::semi_join(
       cells, panel, by = c(geography, "birth_month")
@@ -1250,7 +1318,7 @@ immunity_draws <- function(
     cells = cells, cell_offset = max(c(0L, history$cells$cell)),
     panel = panel, geography = geography, coupling = coupling, ve = ve,
     maternal_months = maternal_months, max_doses = max_doses,
-    summary_args = summary_args
+    summary_args = summary_args, conventions = conventions
   )
   draws <- if (parallel) {
     mirai::mirai_map(batches, .draw_batch, .args = batch_args) |>
@@ -1308,7 +1376,7 @@ immunity_draws <- function(
 #' @noRd
 .draw_batch <- function(batch, cells, cell_offset, panel, geography,
                         coupling, ve, maternal_months, max_doses,
-                        summary_args) {
+                        summary_args, conventions = mip_conventions()) {
   batch_cells <- purrr::map(batch$draw, \(d) {
     dplyr::mutate(
       cells,
@@ -1322,7 +1390,9 @@ immunity_draws <- function(
   }) |>
     purrr::list_rbind()
 
-  run <- .run_cohorts(batch_cells, batch_events, coupling, ve, max_doses)
+  run <- .run_cohorts(
+    batch_cells, batch_events, coupling, ve, max_doses, conventions
+  )
   values <- .monthly_values(
     panel, batch_cells, run$units, run$unit_values, geography
   ) |>

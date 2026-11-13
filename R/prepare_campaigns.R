@@ -33,6 +33,12 @@
 #' of lifetime doses. They are kept for calibrating and validating
 #' assumptions about how campaign doses overlap with earlier doses.
 #'
+#' **Coupling.** An optional `coupling` column in `calendar` sets who each
+#' campaign reaches first (`"dependent"`, `"independent"` or
+#' `"complementary"`; `NA` keeps the default of [estimate_immunity()]). It
+#' is kept in `campaigns` and carried into the history by
+#' [build_vaccination_history()].
+#'
 #' **Diagnostics.** Each row is one problem: `missing_dates`,
 #' `end_before_start`, `missing_age`, `invalid_age`, `missing_coverage`,
 #' `coverage_out_of_range` (outside 0-100%), `unmatched_geography` (missing
@@ -43,7 +49,8 @@
 #' @param calendar Data frame with the `geography` columns, `campaign_id`,
 #'   `start_date`, `end_date` (Dates, `NA` when unknown) and either
 #'   `target_age` (text) or `age_min_months` and `age_max_months` (upper
-#'   bound exclusive). Optional columns `source` and `note` are kept.
+#'   bound exclusive). Optional columns `source`, `note` and `coupling`
+#'   are kept.
 #' @param evaluation Optional survey results in long form, with the
 #'   `geography` columns, `campaign_id`, `indicator`, `value_pct`, and
 #'   optionally `lower_pct`, `upper_pct`, `n` and `survey` (the survey name,
@@ -64,7 +71,8 @@
 #'       columns, `campaign_id`, `start_date`, `end_date`, `target_age`,
 #'       `age_min_months`, `age_max_months`, `coverage`, `coverage_lower`,
 #'       `coverage_upper`, `coverage_source`, `coverage_reference`,
-#'       `dates_source`, `note`, `needs_dates` and `needs_coverage`}
+#'       `dates_source`, `note`, `needs_dates` and `needs_coverage`, and
+#'       `coupling` when `calendar` has it}
 #'     \item{evaluation}{Survey indicators as proportions: the `geography`
 #'       columns, `campaign_id`, `survey`, `indicator`, `value`, `lower`,
 #'       `upper` and `n`}
@@ -116,6 +124,10 @@ prepare_campaigns <- function(
     )
   }
 
+  if ("coupling" %in% names(calendar)) {
+    .check_raw_types(calendar, "calendar", list(coupling = is.character))
+    .check_coupling_values(calendar$coupling, "calendar")
+  }
   standardised <- .standardise_calendar(calendar, geography)
   calendar <- standardised$calendar
   evaluation_out <- .standardise_evaluation(evaluation, geography)
@@ -166,7 +178,7 @@ prepare_campaigns <- function(
       "age_min_months", "age_max_months", "coverage", "coverage_lower",
       "coverage_upper", "coverage_source", "coverage_reference",
       "dates_source", "note", "needs_dates", "needs_coverage"
-    )))
+    )), dplyr::any_of("coupling"))
 
   list(
     campaigns = campaigns,
@@ -390,8 +402,8 @@ prepare_campaigns <- function(
     dplyr::distinct()
 }
 
-# internal helper: dates, ages, source and note from the first calendar row
-# of each key
+# internal helper: dates, ages, source, note and coupling from the first
+# calendar row of each key
 #' @noRd
 .attach_calendar <- function(campaigns, calendar, key_cols) {
   dates <- calendar |>
@@ -400,7 +412,7 @@ prepare_campaigns <- function(
       key_cols, "start_date", "end_date", "target_age", "age_min_months",
       "age_max_months",
       dates_source = "source", "note"
-    )))
+    )), dplyr::any_of("coupling"))
   dplyr::left_join(
     campaigns, dates,
     by = key_cols, relationship = "many-to-one"
