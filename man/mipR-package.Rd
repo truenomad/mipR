@@ -4,7 +4,7 @@
 \name{mipR-package}
 \alias{mipR}
 \alias{mipR-package}
-\title{mipR: Spatiotemporal Measles Population Immunity Profiling}
+\title{mipR: Measles Immunity Profiling by Birth Cohort, Area and Month}
 \description{
 \if{html}{\figure{logo.png}{options: style='float: right' alt='logo' width='120'}}
 

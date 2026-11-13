@@ -3,10 +3,14 @@
 <!-- badges: start -->
 
 [![Lifecycle: stable](https://img.shields.io/badge/lifecycle-stable-brightgreen.svg)](https://lifecycle.r-lib.org/articles/stages.html#stable)
+[![Last commit](https://img.shields.io/github/last-commit/truenomad/mipR)](https://github.com/truenomad/mipR/commits/main)
+[![Version](https://img.shields.io/github/r-package/v/truenomad/mipR?label=version)](https://github.com/truenomad/mipR/blob/main/DESCRIPTION)
+[![R >= 4.1.0](https://img.shields.io/badge/R-%E2%89%A5%204.1.0-276DC3.svg)](https://www.r-project.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/truenomad/mipR/blob/main/LICENSE.md)
 
 <!-- badges: end -->
 
-**Spatiotemporal Measles Population Immunity Profiling**
+**Measles Immunity Profiling by Birth Cohort, Area and Month**
 
 `mipR` is an R package for reconstructing and projecting measles population immunity by birth cohort, geographical area and calendar month.
 

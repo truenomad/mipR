@@ -8,3 +8,5 @@
 ^\.claude$
 ^CLAUDE\.md$
 ^examples$
+^\.zenodo\.json$
+^CITATION\.cff$

@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use mipR, please cite it as below."
+type: software
+title: "mipR: Measles Immunity Profiling by Birth Cohort, Area and Month"
+version: 1.0.0
+authors:
+  - family-names: Yusuf
+    given-names: Mohamed A.
+    email: moyusuf@who.int
+    orcid: "https://orcid.org/0000-0002-9339-4613"
+license: MIT
+repository-code: "https://github.com/truenomad/mipR"
+abstract: >-
+  Provides a framework for reconstructing and projecting measles population
+  immunity across birth cohorts, age groups, geographical units, and calendar
+  months. The package integrates routine immunisation coverage, supplementary
+  immunisation activities, and vaccine effectiveness assumptions to support
+  spatiotemporal immunity profiling. Infection-acquired immunity and migration
+  are not modelled.
+keywords:
+  - measles
+  - population immunity
+  - vaccination coverage
+  - supplementary immunisation activities
+  - R

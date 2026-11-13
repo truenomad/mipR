@@ -1,0 +1,12 @@
+bibentry(
+  bibtype = "Manual",
+  title = "mipR: Measles Immunity Profiling by Birth Cohort, Area and Month",
+  author = person(
+    "Mohamed A.", "Yusuf",
+    email = "moyusuf@who.int",
+    comment = c(ORCID = "0000-0002-9339-4613")
+  ),
+  year = "2026",
+  note = "R package version 1.0.0",
+  url = "https://github.com/truenomad/mipR"
+)
